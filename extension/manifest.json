@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "SIH26171 Privacy Vision Agent",
+  "version": "0.1.0",
+  "description": "Privacy-preserving browser vision agent.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "transformers/*",
+        "mediapipe/wasm/*",
+        "models/ner/*",
+        "models/blazeface/*",
+        "models/privacy-detector/*",
+        "models/ocr/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
