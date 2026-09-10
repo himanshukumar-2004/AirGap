@@ -31,7 +31,7 @@ for (const [i, entry] of builds.entries()) {
       viteStaticCopy({
         targets: [
           { src: 'node_modules/@huggingface/transformers/dist/*.{wasm,mjs}', dest: 'transformers' },
-          { src: 'models/ner/*', dest: 'models/ner' },
+          { src: 'models/ner/**/*', dest: 'models/ner' },
           { src: 'models/blazeface/*', dest: 'models/blazeface' },
           { src: 'node_modules/@mediapipe/tasks-vision/wasm/*', dest: 'mediapipe/wasm' },
           { src: 'models/privacy-detector/*', dest: 'models/privacy-detector' },
