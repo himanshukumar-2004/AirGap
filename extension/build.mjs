@@ -40,7 +40,6 @@ for (const [i, entry] of builds.entries()) {
           { src: 'manifest.json', dest: '.' },
           { src: 'popup.html', dest: '.' },
           { src: 'offscreen.html', dest: '.' },
-          { src: 'offscreen.js', dest: '.' },
         ],
       }),
     ],
