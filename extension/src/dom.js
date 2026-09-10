@@ -42,6 +42,9 @@ export function extractPageState() {
   walkOpenShadowRoots(document, nodes, new Set());
   const elements = [];
   const images = [];
+  const tier0Mapping = {};
+  const tier0Counters = {};
+  const valueToToken = new Map();
 
   for (const el of nodes) {
     if (elements.length >= MAX_ELEMENTS || !isVisible(el)) continue;
@@ -51,15 +54,29 @@ export function extractPageState() {
 
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
       const type = tag === 'INPUT' ? el.type : tag.toLowerCase();
-      const isSensitive = type === 'password' || /password|passcode|otp|pin|secret|token/i.test(`${type} ${el.name || ''} ${el.placeholder || ''}`);
-      if (isSensitive) el.dataset.agentSensitive = 'true';
+      const isSecret = type === 'password' || /password|passcode|otp|pin|token/i.test(`${type} ${el.name || ''} ${el.placeholder || ''}`);
+      if (isSecret) el.dataset.agentSensitive = 'true';
+
+      let rawContent = '';
+      if (isSecret) {
+        rawContent = '[REDACTED_PASSWORD]';
+      } else {
+        const val = el.value ? String(el.value).trim() : '';
+        const label = el.getAttribute('aria-label') || el.placeholder || el.name || '';
+        rawContent = val ? (label ? `${label}: ${val}` : val) : label;
+      }
+
+      const content = isSecret
+        ? '[REDACTED_PASSWORD]'
+        : applyTier0Text(rawContent, tier0Mapping, tier0Counters, valueToToken);
+
       elements.push({
         id,
-        type: type === 'password' ? 'password' : 'input',
+        type: isSecret ? 'password' : 'input',
         inputType: type,
-        content: type === 'password' ? '[REDACTED_PASSWORD]' : applyTier0Text(el.getAttribute('aria-label') || el.placeholder || el.name || ''),
+        content,
         bbox: [r.x, r.y, r.width, r.height],
-        sensitive: isSensitive,
+        sensitive: isSecret,
       });
       continue;
     }
@@ -69,7 +86,7 @@ export function extractPageState() {
       const image = {
         id,
         type: 'image',
-        alt: applyTier0Text(el.alt || ''),
+        alt: applyTier0Text(el.alt || '', tier0Mapping, tier0Counters, valueToToken),
         width: el.naturalWidth || el.width || 0,
         height: el.naturalHeight || el.height || 0,
         sameOrigin: (() => { try { return new URL(src).origin === location.origin; } catch { return false; } })(),
@@ -92,16 +109,24 @@ export function extractPageState() {
 
     if (['BUTTON', 'A', 'LABEL', 'H1', 'H2', 'H3', 'H4', 'LI', 'P', 'SPAN', 'DIV'].includes(tag)) {
       const text = directText(el);
-      if (text) elements.push({ id, type: tag.toLowerCase(), content: applyTier0Text(text), bbox: [r.x, r.y, r.width, r.height] });
+      if (text) {
+        elements.push({
+          id,
+          type: tag.toLowerCase(),
+          content: applyTier0Text(text, tier0Mapping, tier0Counters, valueToToken),
+          bbox: [r.x, r.y, r.width, r.height],
+        });
+      }
     }
   }
 
   return {
     url: location.origin + location.pathname,
-    title: applyTier0Text(document.title || ''),
+    title: applyTier0Text(document.title || '', tier0Mapping, tier0Counters, valueToToken),
     viewport: { width: innerWidth, height: innerHeight, devicePixelRatio },
     elements,
     images,
+    tier0Mapping,
   };
 }
 

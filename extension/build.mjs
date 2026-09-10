@@ -6,6 +6,10 @@ import fs from 'node:fs/promises';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 
+import { patchEmbindForCSP, postProcessDistForCSP } from './patch-csp.mjs';
+
+await patchEmbindForCSP();
+
 const builds = [
   { name: 'content', input: 'src/content.js' },
   { name: 'background', input: 'src/background.js' },
@@ -54,6 +58,12 @@ const mediapipeWasmDest = path.resolve(root, 'dist/mediapipe/wasm');
 await fs.mkdir(mediapipeWasmDest, { recursive: true });
 await fs.cp(mediapipeWasmSrc, mediapipeWasmDest, { recursive: true, force: true });
 
+// Copy mediapipe genai wasm files directly into dist/mediapipe/genai-wasm
+const genaiWasmSrc = path.resolve(root, 'node_modules/@mediapipe/tasks-genai/wasm');
+const genaiWasmDest = path.resolve(root, 'dist/mediapipe/genai-wasm');
+await fs.mkdir(genaiWasmDest, { recursive: true });
+await fs.cp(genaiWasmSrc, genaiWasmDest, { recursive: true, force: true });
+
 // 4. Copy onnxruntime-web WASM & MJS files directly into dist/transformers
 const ortDist = path.resolve(root, 'node_modules/onnxruntime-web/dist');
 const transformersDist = path.resolve(root, 'dist/transformers');
@@ -67,5 +77,7 @@ for (const file of ortFiles) {
     );
   }
 }
+
+await postProcessDistForCSP();
 
 console.log('\nBuild completed successfully.');

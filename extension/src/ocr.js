@@ -21,10 +21,12 @@ async function loadOCR() {
       },
 
       textDetectionBatchSize: 1,
-      textRecognitionBatchSize: 4,
+      textRecognitionBatchSize: 1,
 
       ortOptions: {
-        backend: navigator.gpu ? 'webgpu' : 'wasm'
+        backend: 'wasm',
+        numThreads: 1,
+        wasmPaths: localUrl('transformers/')
       }
     });
   }

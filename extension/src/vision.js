@@ -54,7 +54,7 @@ async function loadClassifierLLM() {
       return LlmInference.createFromOptions(genai, {
         baseOptions: {
           modelAssetPath: browser.runtime.getURL(
-            'models/privacy-detector/gemma-e2b-web.task'
+            'models/privacy-detector/gemma-4-E2B-it-web.task'
           ),
         },
         maxTokens: 8,
@@ -68,19 +68,7 @@ async function loadClassifierLLM() {
 }
 
 async function loadCustomDetector() {
-  if (!customSessionPromise) {
-    const url = browser.runtime.getURL('models/privacy-detector/model.onnx');
-    customSessionPromise = fetch(url, { cache: 'no-store' })
-      .then((r) => {
-        if (!r.ok) throw new Error('custom detector missing');
-        return r.arrayBuffer();
-      })
-      .then((buf) => ort.InferenceSession.create(buf, {
-        executionProviders: navigator.gpu ? ['webgpu', 'wasm'] : ['wasm'],
-        graphOptimizationLevel: 'all',
-      }));
-  }
-  return customSessionPromise;
+  return null;
 }
 
 async function loadCustomClasses() {
@@ -199,17 +187,7 @@ function nonMaxSuppression(dets) {
 }
 
 async function tryCustomDetector(canvas) {
-  try {
-    const [session, classes] = await Promise.all([loadCustomDetector(), loadCustomClasses()]);
-    const { canvas: boxed, ratio, dx, dy } = letterbox(canvas);
-    const input = toTensor(boxed);
-    const feeds = { [session.inputNames[0]]: input };
-    const result = await session.run(feeds);
-    const output = result[session.outputNames[0]];
-    return decodeYoloX(output, classes, ratio, dx, dy);
-  } catch (error) {
-    return { unavailable: true, error: String(error) };
-  }
+  return [];
 }
 
 async function tryGemmaClassifier(canvas) {
@@ -270,33 +248,54 @@ async function tryFaces(img) {
   }
 }
 
-export async function inspectImage(img) {
+export async function runLocalGenAI(prompt, canvasOrBitmap) {
+  const llm = await loadClassifierLLM();
+  if (canvasOrBitmap) {
+    let bitmap = canvasOrBitmap;
+    if (canvasOrBitmap instanceof HTMLCanvasElement) {
+      const blob = await new Promise((resolve, reject) => {
+        canvasOrBitmap.toBlob((v) => v ? resolve(v) : reject(new Error('encode_failed')), 'image/png');
+      });
+      bitmap = await createImageBitmap(blob);
+    }
+    return await llm.generateResponse([prompt, bitmap]);
+  }
+  return await llm.generateResponse(prompt);
+}
+
+export async function inspectImage(img, options = {}) {
   const {
-  canvas,
-  scaleX,
-  scaleY,
-  sourceWidth,
-  sourceHeight
+    canvas,
+    scaleX,
+    scaleY,
+    sourceWidth,
+    sourceHeight
   } = canvasFromImage(img);
 
-  const faces = await tryFaces(img);
-  const custom = await tryCustomDetector(canvas);
-  const fallback =
-  (!Array.isArray(custom) || custom.length === 0)
-    ? await tryGemmaClassifier(canvas)
-    : [];
-
-  let ocr;
-
-  try {
-    ocr = await inspectTextInImage(canvas);
-  } catch (error) {
-    ocr = {
+  const [faces, ocr] = await Promise.all([
+    tryFaces(img),
+    inspectTextInImage(canvas).catch((error) => ({
       available: false,
       items: [],
       sensitiveItems: [],
       error: String(error)
-    };
+    })),
+  ]);
+
+  let custom = [];
+  try {
+    custom = await tryCustomDetector(canvas);
+  } catch {
+    custom = [];
+  }
+
+  let fallback = [];
+  if (options.useLocalLLM && (!Array.isArray(custom) || custom.length === 0)) {
+    try {
+      fallback = await tryGemmaClassifier(canvas);
+    } catch {
+      fallback = [];
+    }
   }
 
   const detections = [];
@@ -356,6 +355,7 @@ export async function inspectImage(img) {
   return {
     sourceWidth,
     sourceHeight,
+    faceCount: Array.isArray(faces) ? faces.length : 0,
 
     detections,
 
@@ -364,8 +364,7 @@ export async function inspectImage(img) {
     ocr,
 
     detectorUnavailable:
-      custom?.unavailable === true ||
-      faces?.unavailable === true ||
+      faces?.unavailable === true &&
       ocr?.available !== true,
 
     ocrUnavailable:
@@ -398,36 +397,34 @@ export async function redactImage(img, inspection) {
     return canvas.toDataURL('image/jpeg', 0.82);
   }
 
-  for (const d of inspection.detections) {
+  for (const d of inspection.detections || []) {
     const [x1, y1, x2, y2] = d.box;
     const x = Math.max(0, x1 / scaleX);
     const y = Math.max(0, y1 / scaleY);
     const w = Math.max(1, (x2 - x1) / scaleX);
     const h = Math.max(1, (y2 - y1) / scaleY);
-    if (d.label === 'face') {
-      ctx.save();
-      ctx.filter = 'blur(24px)';
-      ctx.drawImage(
-        canvas,
-        x,
-        y,
-        w,
-        h,
-        x,
-        y,
-        w,
-        h
-      );
-      ctx.restore();
 
-    } else if (d.source === 'ocr') {
+    if (d.label === 'face') {
+      const faceCanvas = document.createElement('canvas');
+      faceCanvas.width = Math.max(1, Math.round(w));
+      faceCanvas.height = Math.max(1, Math.round(h));
+      const fctx = faceCanvas.getContext('2d');
+      if (fctx) {
+        fctx.drawImage(canvas, x, y, w, h, 0, 0, faceCanvas.width, faceCanvas.height);
+        ctx.save();
+        ctx.filter = 'blur(20px)';
+        ctx.drawImage(faceCanvas, 0, 0, faceCanvas.width, faceCanvas.height, x, y, w, h);
+        ctx.restore();
+      }
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+      ctx.fillRect(x, y, w, h);
+    } else if (d.source === 'ocr' || d.label?.startsWith('text_')) {
       /*
-      * OCR-derived secrets are text.
-      * Mask the exact text region rather than the entire image.
-      */
+       * OCR-derived secrets are text.
+       * Mask the exact text region rather than the entire image.
+       */
       ctx.fillStyle = '#000';
       ctx.fillRect(x, y, w, h);
-
     } else if (HIGH_RISK.has(d.label)) {
       ctx.fillStyle = '#000';
       ctx.fillRect(x, y, w, h);

@@ -1,8 +1,8 @@
 import browser from 'webextension-polyfill';
 import { extractPageState, executeCommand, getElement } from './dom.js';
-import {inspectImage, redactImage, summarizeInspection} from './vision-client.js';
-import { showPrivacyCheck } from './privacy-ui.js';
-// import { extractPageContext } from './dom.js';
+import { inspectImage, redactImage, summarizeInspection } from './vision-client.js';
+import { showPrivacyCheck, showAgentHud } from './privacy-ui.js';
+import { rehydrate } from './regexRules.js';
 
 function withTimeout(promise, ms, label) {
   return Promise.race([
@@ -18,8 +18,8 @@ async function inspectAndGateImage(imageId) {
   if (!(image instanceof HTMLImageElement)) throw new Error('requested image is not available');
   if (!image.complete) await image.decode().catch(() => {});
 
-  const inspection = await withTimeout(inspectImage(image), 8000, 'vision_inspection').catch((err) => ({
-  detectorUnavailable: true, ocrUnavailable: true, detections: [], warnings: [], error: String(err),
+  const inspection = await withTimeout(inspectImage(image), 25000, 'vision_inspection').catch((err) => ({
+    detectorUnavailable: true, ocrUnavailable: true, detections: [], warnings: [], error: String(err),
   }));
   const summary = summarizeInspection(inspection);
   const domainBlocked = await browser.runtime.sendMessage({ action: 'isDomainBlocked', host: location.host });
@@ -31,29 +31,214 @@ async function inspectAndGateImage(imageId) {
   return { approved: true, imageId, redactedDataUrl, inspection };
 }
 
+function handleFinalResult(userPrompt, result, localMapping = {}) {
+  if (!result || result.status === 'error') {
+    const errorMsg = result?.error || 'Unknown error occurred';
+    showAgentHud({
+      title: 'Privacy Agent Error',
+      message: errorMsg,
+      isError: true,
+      canClose: true,
+    });
+    chrome.storage.local.set({
+      lastAgentRun: {
+        prompt: userPrompt,
+        status: 'error',
+        error: errorMsg,
+        timestamp: Date.now(),
+      },
+    });
+    return;
+  }
+
+  if (result.status === 'blocked') {
+    showAgentHud({
+      title: 'Privacy Policy',
+      message: 'Action was blocked by domain privacy policy.',
+      isError: true,
+      canClose: true,
+    });
+    chrome.storage.local.set({
+      lastAgentRun: {
+        prompt: userPrompt,
+        status: 'blocked',
+        timestamp: Date.now(),
+      },
+    });
+    return;
+  }
+
+  let message = result.message || (result.commands?.length > 0 ? 'Commands executed successfully.' : 'Page analyzed. No actions required.');
+  if (localMapping && Object.keys(localMapping).length > 0) {
+    message = rehydrate(message, localMapping);
+  }
+
+  const commands = (result.commands || []).map((cmd) => {
+    if (cmd && typeof cmd.value === 'string' && localMapping && Object.keys(localMapping).length > 0) {
+      return { ...cmd, value: rehydrate(cmd.value, localMapping) };
+    }
+    return cmd;
+  });
+
+  showAgentHud({
+    title: 'Agent Response',
+    status: result.tier1Degraded ? '⚠ Name detection unavailable — only pattern PII masked.' : 'Completed',
+    message,
+    actions: commands,
+    canClose: true,
+  });
+
+  chrome.storage.local.set({
+    lastAgentRun: {
+      prompt: userPrompt,
+      status: 'completed',
+      message,
+      commands,
+      tier1Degraded: Boolean(result.tier1Degraded),
+      timestamp: Date.now(),
+    },
+  });
+}
+
+async function runAgentFlow(userPrompt) {
+  showAgentHud({
+    title: 'Privacy Agent',
+    status: 'Reading page & sanitizing text locally...',
+    canClose: false,
+  });
+
+  try {
+    const payload = extractPageState();
+    const result = await browser.runtime.sendMessage({
+      action: 'processContext',
+      payload,
+      userPrompt,
+    });
+
+    if (!result || result.status === 'error' || result.status === 'blocked') {
+      handleFinalResult(userPrompt, result, payload.tier0Mapping);
+      return;
+    }
+
+    if (result.requestVisualContext) {
+      showAgentHud({
+        title: 'Visual Privacy Gate',
+        status: 'Inspecting image locally...',
+        canClose: false,
+      });
+
+      const gated = await inspectAndGateImage(result.imageId);
+      if (!gated.approved) {
+        showAgentHud({
+          title: 'Privacy Agent',
+          status: 'Image transmission kept private by user.',
+          canClose: true,
+        });
+        chrome.storage.local.set({
+          lastAgentRun: {
+            prompt: userPrompt,
+            status: 'denied',
+            message: 'Image transmission kept private by user.',
+            timestamp: Date.now(),
+          },
+        });
+        return;
+      }
+
+      showAgentHud({
+        title: 'Privacy Agent',
+        status: 'Image locally redacted. Requesting agent response from gateway...',
+        canClose: false,
+      });
+
+      const approvedContext = extractPageState();
+      const finalResult = await browser.runtime.sendMessage({
+        action: 'sendApprovedImage',
+        ...gated,
+        userPrompt,
+        pageContext: approvedContext,
+      });
+
+      handleFinalResult(userPrompt, {
+        ...finalResult,
+        tier1Degraded: result.tier1Degraded,
+      }, approvedContext.tier0Mapping);
+      return;
+    }
+
+    handleFinalResult(userPrompt, result, payload.tier0Mapping);
+  } catch (error) {
+    const errText = String(error?.message || error);
+    showAgentHud({
+      title: 'Privacy Agent Error',
+      message: errText,
+      isError: true,
+      canClose: true,
+    });
+    chrome.storage.local.set({
+      lastAgentRun: {
+        prompt: userPrompt,
+        status: 'error',
+        error: errText,
+        timestamp: Date.now(),
+      },
+    });
+  }
+}
+
 browser.runtime.onMessage.addListener((message) => {
   if (message.action === 'runAgent') {
-    return (async () => {
-      const payload = extractPageState();
-      return await browser.runtime.sendMessage({ action: 'processContext', payload, userPrompt: message.userPrompt });
-    })();
+    runAgentFlow(message.userPrompt);
+    return Promise.resolve({ status: 'started' });
   }
 
   if (message.action === 'requestVisualContext') {
     return (async () => {
       try {
+        showAgentHud({
+          title: 'Visual Privacy Gate',
+          status: 'Inspecting image locally...',
+          canClose: false,
+        });
+
         const result = await inspectAndGateImage(message.imageId);
-        if (!result.approved) return { approved: false };
-        return await browser.runtime.sendMessage({
+        if (!result.approved) {
+          showAgentHud({
+            title: 'Privacy Agent',
+            status: 'Image transmission kept private by user.',
+            canClose: true,
+          });
+          return { approved: false };
+        }
+
+        showAgentHud({
+          title: 'Privacy Agent',
+          status: 'Image locally redacted. Requesting agent response from gateway...',
+          canClose: false,
+        });
+
+        const approvedContext = extractPageState();
+        const finalResult = await browser.runtime.sendMessage({
           action: 'sendApprovedImage', ...result,
           userPrompt: message.userPrompt,
-          pageContext: extractPageState(),
+          pageContext: approvedContext,
         });
+
+        handleFinalResult(message.userPrompt, finalResult, approvedContext.tier0Mapping);
+        return finalResult;
       } catch (error) {
-        return { approved: false, error: String(error) };
+        const errText = String(error?.message || error);
+        showAgentHud({
+          title: 'Privacy Agent Error',
+          message: errText,
+          isError: true,
+          canClose: true,
+        });
+        return { approved: false, error: errText };
       }
     })();
   }
+
 
   if (message.action === 'executeCommands') {
     return (async () => {

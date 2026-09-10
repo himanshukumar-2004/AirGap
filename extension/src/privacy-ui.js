@@ -36,3 +36,72 @@ export function showPrivacyCheck({ imageAlt, summary, domainBlocked }) {
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[c]));
 }
+
+let agentHud;
+
+function ensureAgentHud() {
+  if (agentHud) return agentHud;
+  agentHud = document.createElement('div');
+  agentHud.id = '__sih_agent_hud';
+  agentHud.style.cssText = [
+    'position: fixed',
+    'bottom: 24px',
+    'right: 24px',
+    'max-width: 440px',
+    'width: calc(100vw - 48px)',
+    'z-index: 2147483646',
+    'background: #ffffff',
+    'color: #111827',
+    'border-radius: 14px',
+    'box-shadow: 0 10px 30px rgba(0,0,0,0.18), 0 0 0 1px rgba(0,0,0,0.08)',
+    'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    'font-size: 13px',
+    'padding: 16px',
+    'transition: all 0.2s ease',
+    'box-sizing: border-box',
+    'display: none',
+  ].join(';');
+  document.documentElement.appendChild(agentHud);
+  return agentHud;
+}
+
+export function showAgentHud({ title = 'Privacy Agent', status = '', message = '', actions = [], isError = false, canClose = true }) {
+  const hud = ensureAgentHud();
+  hud.style.display = 'block';
+
+  let actionsHtml = '';
+  if (Array.isArray(actions) && actions.length > 0) {
+    const list = actions.map((a, i) => `<div style="margin-top:2px">${i + 1}. <b>${escapeHtml(a.action.toUpperCase())}</b> on #${escapeHtml(a.targetId || '')}${a.value ? ` ("${escapeHtml(a.value)}")` : ''}</div>`).join('');
+    actionsHtml = `<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #e5e7eb;font-size:11px;color:#4b5563"><b>Executed Actions:</b>${list}</div>`;
+  }
+
+  let closeBtnHtml = canClose
+    ? `<button id="__sih_hud_close" style="background:none;border:none;color:#9ca3af;font-size:18px;cursor:pointer;padding:0 4px;line-height:1" title="Dismiss">✕</button>`
+    : '';
+
+  hud.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:${isError ? '#dc2626' : '#2563eb'}">${escapeHtml(title)}</div>
+      ${closeBtnHtml}
+    </div>
+    ${status ? `<div style="font-size:12px;color:#6b7280;margin-bottom:6px">${escapeHtml(status)}</div>` : ''}
+    ${message ? `<div style="font-size:13px;line-height:1.5;color:#111827;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow-y:auto">${escapeHtml(message)}</div>` : ''}
+    ${actionsHtml}
+  `;
+
+  if (canClose) {
+    const closeBtn = hud.querySelector('#__sih_hud_close');
+    if (closeBtn) {
+      closeBtn.onclick = () => {
+        hud.style.display = 'none';
+      };
+    }
+  }
+}
+
+export function hideAgentHud() {
+  if (agentHud) {
+    agentHud.style.display = 'none';
+  }
+}
+

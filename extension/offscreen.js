@@ -39,7 +39,7 @@ async function getNerPipeline() {
   }
 }
 
-function mergeEntityMappings(text, entities, mapping, counters) {
+function mergeEntityMappings(text, entities, mapping, counters, valueToToken = new Map()) {
   let out = text;
 
   for (const ent of entities) {
@@ -61,14 +61,22 @@ function mergeEntityMappings(text, entities, mapping, counters) {
       bucket = 'LOCATION';
     }
 
-    const n =
-      (counters[bucket] = (counters[bucket] || 0) + 1);
-
-    const token = `[${bucket}_${n}]`;
+    let token;
+    if (valueToToken && valueToToken.has(raw)) {
+      token = valueToToken.get(raw);
+    } else {
+      const n = (counters[bucket] = (counters[bucket] || 0) + 1);
+      token = `[${bucket}_${n}]`;
+      if (valueToToken) valueToToken.set(raw, token);
+    }
 
     if (out.includes(raw)) {
       out = out.split(raw).join(token);
       mapping[token] = raw;
+      const bareToken = `[${bucket}]`;
+      if (!mapping[bareToken]) {
+        mapping[bareToken] = raw;
+      }
     }
   }
 
@@ -80,6 +88,7 @@ async function runTier1(elements) {
 
   const mapping = {};
   const counters = {};
+  const valueToToken = new Map();
 
   if (!ner) {
     return {
@@ -115,7 +124,8 @@ async function runTier1(elements) {
       el.content,
       entities,
       mapping,
-      counters
+      counters,
+      valueToToken
     );
   }
 

@@ -73,7 +73,7 @@ Return ONLY JSON:
 - If browser interaction is required (click, type, scroll), specify them in "actions".
 - When the instruction genuinely requires visual evidence and an image exists, set requestVisualContext=true, choose exactly one imageId, and return no actions.'''
 
-FALLBACK_MODELS = [MODEL, 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash']
+FALLBACK_MODELS = [MODEL, 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.7-flash', 'gemini-3.8-flash']
 
 def clean_actions(value: Any, elements: list[Element]) -> list[dict[str, Any]]:
     ids = {e.id for e in elements}

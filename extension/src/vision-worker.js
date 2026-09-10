@@ -1,60 +1,35 @@
-import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
-// import { PaddleOCR } from '@paddleocr/paddleocr-js';
-import {
-  LlmInference,
-  FilesetResolver as GenAiFilesetResolver,
-} from '@mediapipe/tasks-genai';
+import { inspectImage as runInspectImage, redactImage as runRedactImage, summarizeInspection, runLocalGenAI } from './vision.js';
+import { summarizeOCR } from './ocr.js';
 
-const MODEL_BASE = chrome.runtime.getURL('models/');
-
-let faceDetector = null;
-// let ocr = null;
-let llm = null;
-
-async function initVision() {
-  if (faceDetector) return;
-
-  const visionFileset = await FilesetResolver.forVisionTasks(
-    chrome.runtime.getURL('mediapipe/wasm')
-  );
-
-  faceDetector = await FaceDetector.createFromOptions(
-    visionFileset,
-    {
-      baseOptions: {
-        modelAssetPath: chrome.runtime.getURL(
-          'models/blazeface/blaze_face_full_range.tflite'
-        ),
-      },
-      runningMode: 'IMAGE',
-    }
-  );
-
-  // ocr = await PaddleOCR.create({
-  //   detModelPath: `${MODEL_BASE}ocr/det.tar`,
-  //   recModelPath: `${MODEL_BASE}ocr/rec.tar`,
-  //   useWasm: true,
-  // });
+function dataUrlToImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = (e) => reject(new Error('Failed to decode image: ' + String(e)));
+    img.src = dataUrl;
+  });
 }
 
 async function inspectImage(imageDataUrl) {
-  await initVision();
+  const img = await dataUrlToImage(imageDataUrl);
+  const inspection = await runInspectImage(img);
+  const summary = summarizeInspection(inspection);
+  const ocrSummary = inspection.ocr ? summarizeOCR(inspection.ocr) : '';
 
-  // Put your existing image-analysis logic here.
-  // For now this safely initializes the local engines.
   return {
     status: 'success',
-    imageDataUrl,
-    faceCount: 0,
-    text: [],
+    ...inspection,
+    summary,
+    ocrSummary,
   };
 }
 
 async function redactImage(imageDataUrl, inspection) {
-  // Put your existing redaction logic here.
+  const img = await dataUrlToImage(imageDataUrl);
+  const redactedDataUrl = await runRedactImage(img, inspection);
   return {
     status: 'success',
-    imageDataUrl,
+    redactedDataUrl,
     inspection,
   };
 }
@@ -96,6 +71,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           error: String(error),
         });
       });
+
+    return true;
+  }
+
+  if (message.type === 'RUN_LOCAL_LLM') {
+    (async () => {
+      let canvas = null;
+      if (message.imageDataUrl) {
+        const img = await dataUrlToImage(message.imageDataUrl);
+        canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+      }
+      return await runLocalGenAI(message.prompt, canvas);
+    })()
+      .then((response) => sendResponse({ success: true, response }))
+      .catch((error) => sendResponse({ success: false, error: String(error) }));
 
     return true;
   }

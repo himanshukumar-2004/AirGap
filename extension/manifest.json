@@ -34,6 +34,7 @@
       "resources": [
         "transformers/*",
         "mediapipe/wasm/*",
+        "mediapipe/genai-wasm/*",
         "models/*",
         "models/*/*",
         "models/*/*/*",

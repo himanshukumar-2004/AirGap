@@ -1,6 +1,6 @@
 import browser from 'webextension-polyfill';
 import { encryptMapping, decryptMapping, getOrCreateKey } from './crypto.js';
-import { containsSensitiveMarker } from './regexRules.js';
+import { containsSensitiveMarker, applyTier0Text, rehydrate } from './regexRules.js';
 
 const BACKEND_URL = 'http://localhost:8000';
 let inFlight = false;
@@ -76,7 +76,7 @@ async function runTier1(elements) {
   };
 }
 
-function mergeEntityMappings(text, entities, mapping, counters) {
+function mergeEntityMappings(text, entities, mapping, counters, valueToToken = new Map()) {
   let out = text;
   for (const ent of entities) {
     const raw = String(ent.word || '').replace(/^##/u, '');
@@ -86,19 +86,31 @@ function mergeEntityMappings(text, entities, mapping, counters) {
     if (group.includes('PER')) bucket = 'PERSON';
     else if (group.includes('ORG')) bucket = 'ORG';
     else if (group.includes('LOC')) bucket = 'LOCATION';
-    const n = (counters[bucket] = (counters[bucket] || 0) + 1);
-    const token = `[${bucket}_${n}]`;
+
+    let token;
+    if (valueToToken && valueToToken.has(raw)) {
+      token = valueToToken.get(raw);
+    } else {
+      const n = (counters[bucket] = (counters[bucket] || 0) + 1);
+      token = `[${bucket}_${n}]`;
+      if (valueToToken) valueToToken.set(raw, token);
+    }
+
     if (out.includes(raw)) {
       out = out.split(raw).join(token);
       mapping[token] = raw;
+      const bareToken = `[${bucket}]`;
+      if (!mapping[bareToken]) {
+        mapping[bareToken] = raw;
+      }
     }
   }
   return out;
 }
 
-async function storeMappings(newMappings) {
+async function storeMappings(newMappings, reset = false) {
   const key = await getOrCreateKey();
-  const existing = await decryptMapping(key).catch(() => ({}));
+  const existing = reset ? {} : await decryptMapping(key).catch(() => ({}));
   const merged = { ...existing, ...newMappings };
   await encryptMapping(key, merged);
   return merged;
@@ -140,7 +152,31 @@ async function callBackend(path, body) {
   }
 }
 
+function bufferToDataUrl(buffer, mimeType = 'image/png') {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  return `data:${mimeType};base64,${btoa(binary)}`;
+}
+
 browser.runtime.onMessage.addListener((message, sender) => {
+  if (message.action === 'fetchImageDataUrl') {
+    return (async () => {
+      try {
+        const response = await fetch(message.url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const mimeType = response.headers.get('content-type') || 'image/png';
+        const buffer = await response.arrayBuffer();
+        return { dataUrl: bufferToDataUrl(buffer, mimeType) };
+      } catch (err) {
+        return { error: String(err) };
+      }
+    })();
+  }
+
   if (message.action === 'isDomainBlocked') {
     return Promise.resolve(domainBlocked(message.host || ''));
   }
@@ -180,16 +216,35 @@ browser.runtime.onMessage.addListener((message, sender) => {
       inFlight = true;
       try {
         const payload = structuredClone(message.payload);
+        const tier0Mapping = payload.tier0Mapping || {};
+        const promptCounters = {};
+        const valueToToken = new Map();
+
+        // Populate valueToToken with existing tier0 mappings to deduplicate identical tokens
+        for (const [tok, val] of Object.entries(tier0Mapping)) {
+          if (!tok.includes('_')) continue;
+          valueToToken.set(val, tok);
+        }
+
+        // Sanitize user prompt to prevent raw PII from leaving the browser
+        const sanitizedPrompt = applyTier0Text(
+          String(message.userPrompt || '').slice(0, 2_000),
+          tier0Mapping,
+          promptCounters,
+          valueToToken
+        );
+
+        // Store tier0 mappings (reset = true starts a fresh session mapping for this run)
+        await storeMappings(tier0Mapping, true);
 
         // Run Tier 1 NER locally in the offscreen document.
         const tier1 = await runTier1(payload.elements);
 
-        const mappings = tier1.mapping;
+        const tier1Mapping = tier1.mapping || {};
         const degraded = tier1.degraded;
 
-        // Store the mapping locally so the original values can be restored
-        // only after the backend responds.
-        await storeMappings(mappings);
+        // Merge Tier 1 NER mappings into the local encrypted storage
+        await storeMappings(tier1Mapping, false);
 
         // Never send actual image src values.
         for (const el of tier1.elements) {
@@ -202,7 +257,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
           viewport: payload.viewport,
           elements: tier1.elements,
           images: payload.images?.map(({ src, ...safe }) => safe) || [],
-          userPrompt: String(message.userPrompt || '').slice(0, 2_000),
+          userPrompt: sanitizedPrompt,
         });
         const result = await handleBackendResponse(
           response,
@@ -224,11 +279,16 @@ browser.runtime.onMessage.addListener((message, sender) => {
   if (message.action === 'sendApprovedImage') {
     return (async () => {
       try {
+        if (message.pageContext?.tier0Mapping) {
+          await storeMappings(message.pageContext.tier0Mapping, false);
+        }
+        const sanitizedPrompt = applyTier0Text(String(message.userPrompt || '').slice(0, 2_000));
         const response = await callBackend('/orchestrate-with-image', {
-          userPrompt: String(message.userPrompt || '').slice(0, 2_000),
+          userPrompt: sanitizedPrompt,
           imageId: message.imageId,
           imageDataUrl: message.redactedDataUrl,
           inspection: message.inspection,
+          pageContext: message.pageContext,
         });
         return await handleBackendResponse(response, sender.tab?.id, message.userPrompt);
       } catch (error) {
@@ -244,12 +304,11 @@ async function handleBackendResponse(response, tabId, userPrompt) {
   if (!response || response.status === 'error') return response || { status: 'error' };
 
   if (response.requestVisualContext) {
-    if (!tabId || !response.imageId) return { status: 'error', error: 'invalid_visual_request' };
-    return browser.tabs.sendMessage(tabId, {
-      action: 'requestVisualContext',
+    return {
+      status: 'success',
+      requestVisualContext: true,
       imageId: response.imageId,
-      userPrompt,
-    });
+    };
   }
 
   const mappingKey = await getOrCreateKey();
@@ -258,17 +317,13 @@ async function handleBackendResponse(response, tabId, userPrompt) {
   // Rehydrate placeholders only after the server response is back on the device.
   const restored = commands.map((cmd) => {
     if (typeof cmd.value === 'string') {
-      let value = cmd.value;
-      for (const [token, original] of Object.entries(mapping)) value = value.split(token).join(original);
-      return { ...cmd, value };
+      return { ...cmd, value: rehydrate(cmd.value, mapping) };
     }
     return cmd;
   });
   let message = response.message || '';
   if (typeof message === 'string') {
-    for (const [token, original] of Object.entries(mapping)) {
-      message = message.split(token).join(original);
-    }
+    message = rehydrate(message, mapping);
   }
 
   let executionResults = [];
