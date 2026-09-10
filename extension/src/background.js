@@ -1,17 +1,9 @@
 import browser from 'webextension-polyfill';
-import { pipeline, env } from '@huggingface/transformers';
 import { encryptMapping, decryptMapping, getOrCreateKey } from './crypto.js';
 import { containsSensitiveMarker } from './regexRules.js';
 
-env.allowLocalModels = true;
-env.allowRemoteModels = false;
-env.localModelPath = browser.runtime.getURL('models/');
-env.backends.onnx.wasm.wasmPaths = browser.runtime.getURL('transformers/');
-
 const BACKEND_URL = 'http://localhost:8000';
-let nerPipeline = null;
 let inFlight = false;
-let nerLoadAttempts = 0;
 
 // Add organization-specific sensitive hosts here. Do not block localhost by default;
 // it is commonly used for local development and the backend itself is localhost:8000.
@@ -19,16 +11,60 @@ const DEFAULT_DOMAIN_BLOCKS = [
   /(^|\.)internal\.example$/i,
 ];
 
-async function getNerPipeline() {
-  if (nerPipeline) return nerPipeline;
-  if (nerLoadAttempts >= 2) return null; // stop retrying forever, not silently forever either
-  nerLoadAttempts++;
-  try {
-    nerPipeline = await pipeline('token-classification', 'ner', { quantized: true, device: 'wasm' });
-    return nerPipeline;
-  } catch {
-    return null;
+async function ensureOffscreenDocument() {
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+    documentUrls: [chrome.runtime.getURL('offscreen.html')]
+  });
+
+  if (contexts.length > 0) {
+    return;
   }
+
+  await chrome.offscreen.createDocument({
+    url: 'offscreen.html',
+    reasons: ['BLOBS'],
+    justification:
+      'Run local privacy-preserving machine learning inference.'
+  });
+}
+
+async function runVisionWorker(message) {
+  await ensureOffscreenDocument();
+
+  return await chrome.runtime.sendMessage({
+    target: 'vision-worker',
+    ...message,
+  });
+}
+
+async function runTier1InOffscreen(elements) {
+  await ensureOffscreenDocument();
+
+  return await chrome.runtime.sendMessage({
+    target: 'offscreen',
+    type: 'PROCESS_TIER1',
+    elements
+  });
+}
+
+async function runTier1(elements) {
+  const result = await runTier1InOffscreen(elements);
+
+  if (!result || result.success === false) {
+    console.warn('Tier 1 NER failed:', result?.error);
+    return {
+      mapping: {},
+      degraded: true,
+      elements
+    };
+  }
+
+  return {
+    mapping: result.mapping || {},
+    degraded: Boolean(result.degraded),
+    elements: result.elements || elements
+  };
 }
 
 function mergeEntityMappings(text, entities, mapping, counters) {
@@ -49,19 +85,6 @@ function mergeEntityMappings(text, entities, mapping, counters) {
     }
   }
   return out;
-}
-
-async function runTier1(elements) {
-  const ner = await getNerPipeline();
-  const mapping = {};
-  const counters = {};
-  if (!ner) return { mapping, degraded: true }; // surfaced below, not swallowed
-  for (const el of elements) {
-    if (!el.content || !['text','p','span','div','label','h1','h2','h3','li','button','a'].includes(el.type)) continue;
-    const entities = await ner(el.content);
-    el.content = mergeEntityMappings(el.content, entities, mapping, counters);
-  }
-  return { mapping, degraded: false };
 }
 
 async function storeMappings(newMappings) {
@@ -127,19 +150,27 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
     inFlight = true;
     try {
       const payload = structuredClone(message.payload);
-      const {
-        mapping: mappings,
-        degraded,
-      } = await runTier1(payload.elements);
+
+      // Run Tier 1 NER locally in the offscreen document.
+      const tier1 = await runTier1(payload.elements);
+
+      const mappings = tier1.mapping;
+      const degraded = tier1.degraded;
+
+      // Store the mapping locally so the original values can be restored
+      // only after the backend responds.
       await storeMappings(mappings);
 
-      // Never send actual image src values. The backend only gets inventory/metadata.
-      for (const el of payload.elements) delete el.src;
+      // Never send actual image src values.
+      for (const el of tier1.elements) {
+        delete el.src;
+      }
+
       const response = await callBackend('/orchestrate', {
         url: payload.url,
         title: payload.title,
         viewport: payload.viewport,
-        elements: payload.elements,
+        elements: tier1.elements,
         images: payload.images?.map(({ src, ...safe }) => safe) || [],
         userPrompt: String(message.userPrompt || '').slice(0, 2_000),
       });

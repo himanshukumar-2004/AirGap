@@ -1,6 +1,6 @@
 import browser from 'webextension-polyfill';
 import { extractPageState, executeCommand, getElement } from './dom.js';
-import { inspectImage, redactImage, summarizeInspection } from './vision.js';
+import {inspectImage, redactImage, summarizeInspection} from './vision-client.js';
 import { showPrivacyCheck } from './privacy-ui.js';
 // import { extractPageContext } from './dom.js';
 

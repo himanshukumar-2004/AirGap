@@ -1,6 +1,0 @@
-{
-  "dependencies": {
-    "@mediapipe/tasks-genai": "^0.10.29",
-    "@mediapipe/tasks-vision": "^1.0.1"
-  }
-}

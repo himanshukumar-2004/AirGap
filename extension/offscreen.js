@@ -1,39 +1,196 @@
-// offscreen.js
+import './src/vision-worker.js';
+import { pipeline, env } from '@huggingface/transformers';
 
-// Initialize your MediaPipe or Vision pipelines here safely (document & canvas exist here)
+env.allowLocalModels = true;
+env.allowRemoteModels = false;
+env.localModelPath = chrome.runtime.getURL('models/');
+env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('transformers/');
+
+let nerPipeline = null;
+let nerLoadAttempts = 0;
 let isInitialized = false;
+
+async function getNerPipeline() {
+  if (nerPipeline) return nerPipeline;
+
+  if (nerLoadAttempts >= 2) {
+    return null;
+  }
+
+  nerLoadAttempts += 1;
+
+  try {
+    nerPipeline = await pipeline(
+      'token-classification',
+      'ner',
+      {
+        quantized: true,
+        device: 'wasm'
+      }
+    );
+
+    return nerPipeline;
+  } catch (error) {
+    console.error('Failed to initialize NER:', error);
+    return null;
+  }
+}
+
+function mergeEntityMappings(text, entities, mapping, counters) {
+  let out = text;
+
+  for (const ent of entities) {
+    const raw = String(ent.word || '').replace(/^##/u, '');
+
+    if (!raw || raw.length < 2) continue;
+
+    const group = String(
+      ent.entity_group || ent.entity || ''
+    ).toUpperCase();
+
+    let bucket = 'ENTITY';
+
+    if (group.includes('PER')) {
+      bucket = 'PERSON';
+    } else if (group.includes('ORG')) {
+      bucket = 'ORG';
+    } else if (group.includes('LOC')) {
+      bucket = 'LOCATION';
+    }
+
+    const n =
+      (counters[bucket] = (counters[bucket] || 0) + 1);
+
+    const token = `[${bucket}_${n}]`;
+
+    if (out.includes(raw)) {
+      out = out.split(raw).join(token);
+      mapping[token] = raw;
+    }
+  }
+
+  return out;
+}
+
+async function runTier1(elements) {
+  const ner = await getNerPipeline();
+
+  const mapping = {};
+  const counters = {};
+
+  if (!ner) {
+    return {
+      mapping,
+      degraded: true,
+      elements
+    };
+  }
+
+  for (const el of elements) {
+    if (
+      !el.content ||
+      ![
+        'text',
+        'p',
+        'span',
+        'div',
+        'label',
+        'h1',
+        'h2',
+        'h3',
+        'li',
+        'button',
+        'a'
+      ].includes(el.type)
+    ) {
+      continue;
+    }
+
+    const entities = await ner(el.content);
+
+    el.content = mergeEntityMappings(
+      el.content,
+      entities,
+      mapping,
+      counters
+    );
+  }
+
+  return {
+    mapping,
+    degraded: false,
+    elements
+  };
+}
 
 async function initVisionAgent() {
   if (isInitialized) return;
-  
-  // Example: Initialize your MediaPipe/WASM vision tasks here
-  // const wasmPath = chrome.runtime.getURL('mediapipe/wasm/');
-  // ... initialize detector ...
+
+  await getNerPipeline();
 
   isInitialized = true;
-  console.log("Vision pipeline initialized inside offscreen document.");
+
+  console.log(
+    'Vision/privacy pipeline initialized inside offscreen document.'
+  );
 }
 
-// Listen for messages dispatched by background.js
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Ignore messages not intended for offscreen processing
-  if (message.target !== 'offscreen') return false;
+chrome.runtime.onMessage.addListener(
+  (message, sender, sendResponse) => {
+    if (message.target !== 'offscreen') {
+      return false;
+    }
 
-  if (message.type === 'PROCESS_FRAME') {
-    handleInference(message.payload)
-      .then((result) => sendResponse({ success: true, data: result }))
-      .catch((err) => sendResponse({ success: false, error: err.message }));
+    if (message.action === 'inspectImage') {
+      return runVisionWorker({
+        type: 'INSPECT_IMAGE',
+        imageDataUrl: message.imageDataUrl,
+      });
+    }
 
-    return true; // Keeps the message channel open for async response
+    if (message.action === 'redactImage') {
+      return runVisionWorker({
+        type: 'REDACT_IMAGE',
+        imageDataUrl: message.imageDataUrl,
+        inspection: message.inspection,
+      });
+    }
+
+    if (message.type === 'PROCESS_TIER1') {
+      runTier1(message.elements)
+        .then((result) => {
+          sendResponse({
+            success: true,
+            ...result
+          });
+        })
+        .catch((error) => {
+          sendResponse({
+            success: false,
+            error: String(error)
+          });
+        });
+
+      return true;
+    }
+
+    if (message.type === 'INIT_VISION') {
+      initVisionAgent()
+        .then(() => {
+          sendResponse({
+            success: true
+          });
+        })
+        .catch((error) => {
+          sendResponse({
+            success: false,
+            error: String(error)
+          });
+        });
+
+      return true;
+    }
+
+    return false;
   }
-});
-
-async function handleInference(payload) {
-  await initVisionAgent();
-
-  // Perform detection/inference using the payload (e.g. image bitmap, base64 data)
-  return {
-    status: "detected",
-    detections: []
-  };
-}
+);

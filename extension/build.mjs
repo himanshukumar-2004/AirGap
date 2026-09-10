@@ -10,6 +10,7 @@ const builds = [
   { name: 'content', input: 'src/content.js' },
   { name: 'background', input: 'src/background.js' },
   { name: 'popup', input: 'src/popup.js' },
+  { name: 'offscreen', input: 'offscreen.js' },
 ];
 
 for (const [i, entry] of builds.entries()) {
@@ -23,7 +24,7 @@ for (const [i, entry] of builds.entries()) {
       minify: false,
       rollupOptions: {
         input: path.resolve(root, entry.input),
-        output: { entryFileNames: `${entry.name}.js`, format: 'iife', inlineDynamicImports: true },
+        output: { entryFileNames: `${entry.name}.js`, format: 'es', inlineDynamicImports: true },
       },
     },
     // ⬇ this is the piece that was missing from every actual build run
@@ -38,6 +39,8 @@ for (const [i, entry] of builds.entries()) {
           { src: 'models/ocr/*.tar', dest: 'models/ocr' },
           { src: 'manifest.json', dest: '.' },
           { src: 'popup.html', dest: '.' },
+          { src: 'offscreen.html', dest: '.' },
+          { src: 'offscreen.js', dest: '.' },
         ],
       }),
     ],
