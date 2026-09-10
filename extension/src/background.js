@@ -11,6 +11,7 @@ const DEFAULT_DOMAIN_BLOCKS = [
   /(^|\.)internal\.example$/i,
 ];
 
+let creatingOffscreenPromise = null;
 async function ensureOffscreenDocument() {
   const contexts = await chrome.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT'],
@@ -21,12 +22,20 @@ async function ensureOffscreenDocument() {
     return;
   }
 
-  await chrome.offscreen.createDocument({
+  if (creatingOffscreenPromise) {
+    await creatingOffscreenPromise;
+    return;
+  }
+
+  creatingOffscreenPromise = chrome.offscreen.createDocument({
     url: 'offscreen.html',
     reasons: ['BLOBS'],
     justification:
       'Run local privacy-preserving machine learning inference.'
   });
+  await creatingOffscreenPromise;
+  creatingOffscreenPromise = null;
+  await new Promise((r) => setTimeout(r, 150));
 }
 
 async function runVisionWorker(message) {
@@ -121,87 +130,111 @@ async function callBackend(path, body) {
     });
     if (!response.ok) throw new Error(`backend_${response.status}`);
     return await response.json();
+  } catch (err) {
+    if (err instanceof TypeError && err.message.includes('fetch')) {
+      throw new Error(`Cannot connect to backend server at ${BACKEND_URL}. Ensure the backend is running (python main.py).`);
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
 }
 
-browser.runtime.onMessage.addListener(async (message, sender) => {
+browser.runtime.onMessage.addListener((message, sender) => {
   if (message.action === 'isDomainBlocked') {
-    return domainBlocked(message.host || '');
+    return Promise.resolve(domainBlocked(message.host || ''));
+  }
+
+  if (message.action === 'inspectImage') {
+    return runVisionWorker({
+      type: 'INSPECT_IMAGE',
+      imageDataUrl: message.imageDataUrl,
+    });
+  }
+
+  if (message.action === 'redactImage') {
+    return runVisionWorker({
+      type: 'REDACT_IMAGE',
+      imageDataUrl: message.imageDataUrl,
+      inspection: message.inspection,
+    });
   }
 
   if (message.action === 'processContext') {
-    if (inFlight) return { status: 'busy' };
-    const host = (() => {
+    return (async () => {
+      if (inFlight) return { status: 'busy' };
+      const host = (() => {
+        try {
+          return new URL(message.payload.url).host;
+        } catch {
+          return '';
+        }
+      })();
+
+      if (domainBlocked(host)) {
+        return {
+          status: 'blocked',
+          reason: 'domain_policy',
+        };
+      }
+      inFlight = true;
       try {
-        return new URL(message.payload.url).host;
-      } catch {
-        return '';
+        const payload = structuredClone(message.payload);
+
+        // Run Tier 1 NER locally in the offscreen document.
+        const tier1 = await runTier1(payload.elements);
+
+        const mappings = tier1.mapping;
+        const degraded = tier1.degraded;
+
+        // Store the mapping locally so the original values can be restored
+        // only after the backend responds.
+        await storeMappings(mappings);
+
+        // Never send actual image src values.
+        for (const el of tier1.elements) {
+          delete el.src;
+        }
+
+        const response = await callBackend('/orchestrate', {
+          url: payload.url,
+          title: payload.title,
+          viewport: payload.viewport,
+          elements: tier1.elements,
+          images: payload.images?.map(({ src, ...safe }) => safe) || [],
+          userPrompt: String(message.userPrompt || '').slice(0, 2_000),
+        });
+        const result = await handleBackendResponse(
+          response,
+          sender.tab?.id,
+          message.userPrompt
+        );
+        return {
+          ...result,
+          tier1Degraded: degraded,
+        };
+      } catch (error) {
+        return { status: 'error', error: String(error) };
+      } finally {
+        inFlight = false;
       }
     })();
-
-    if (domainBlocked(host)) {
-      return {
-        status: 'blocked',
-        reason: 'domain_policy',
-      };
-    }
-    inFlight = true;
-    try {
-      const payload = structuredClone(message.payload);
-
-      // Run Tier 1 NER locally in the offscreen document.
-      const tier1 = await runTier1(payload.elements);
-
-      const mappings = tier1.mapping;
-      const degraded = tier1.degraded;
-
-      // Store the mapping locally so the original values can be restored
-      // only after the backend responds.
-      await storeMappings(mappings);
-
-      // Never send actual image src values.
-      for (const el of tier1.elements) {
-        delete el.src;
-      }
-
-      const response = await callBackend('/orchestrate', {
-        url: payload.url,
-        title: payload.title,
-        viewport: payload.viewport,
-        elements: tier1.elements,
-        images: payload.images?.map(({ src, ...safe }) => safe) || [],
-        userPrompt: String(message.userPrompt || '').slice(0, 2_000),
-      });
-      const result = await handleBackendResponse(
-        response,
-        sender.tab?.id,
-        message.userPrompt
-      );
-      return {
-        ...result,
-        tier1Degraded: degraded,
-      };
-    } catch (error) {
-      return { status: 'error', error: String(error) };
-    } finally {
-      inFlight = false;
-    }
   }
 
   if (message.action === 'sendApprovedImage') {
-    try {
-      const response = await callBackend('/orchestrate-with-image', {
-        userPrompt: String(message.userPrompt || '').slice(0, 2_000),
-        imageId: message.imageId,
-        imageDataUrl: message.redactedDataUrl,
-        inspection: message.inspection,
-      });
-      return await handleBackendResponse(response, sender.tab?.id, message.userPrompt);
-    } catch (error) {
-      return { status: 'error', error: String(error) };
-    }
+    return (async () => {
+      try {
+        const response = await callBackend('/orchestrate-with-image', {
+          userPrompt: String(message.userPrompt || '').slice(0, 2_000),
+          imageId: message.imageId,
+          imageDataUrl: message.redactedDataUrl,
+          inspection: message.inspection,
+        });
+        return await handleBackendResponse(response, sender.tab?.id, message.userPrompt);
+      } catch (error) {
+        return { status: 'error', error: String(error) };
+      }
+    })();
   }
 
   return undefined;
@@ -231,6 +264,23 @@ async function handleBackendResponse(response, tabId, userPrompt) {
     }
     return cmd;
   });
-  if (tabId) await browser.tabs.sendMessage(tabId, { action: 'executeCommands', commands: restored });
-  return { status: 'success', commands: restored };
+  let message = response.message || '';
+  if (typeof message === 'string') {
+    for (const [token, original] of Object.entries(mapping)) {
+      message = message.split(token).join(original);
+    }
+  }
+
+  let executionResults = [];
+  if (tabId && restored.length > 0) {
+    const execRes = await browser.tabs.sendMessage(tabId, { action: 'executeCommands', commands: restored });
+    executionResults = execRes?.results || [];
+  }
+
+  return {
+    status: 'success',
+    message,
+    commands: restored,
+    executionResults,
+  };
 }

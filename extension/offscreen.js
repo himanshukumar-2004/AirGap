@@ -3,8 +3,11 @@ import { pipeline, env } from '@huggingface/transformers';
 
 env.allowLocalModels = true;
 env.allowRemoteModels = false;
+env.useBrowserCache = false;
+env.useWasmCache = false;
 env.localModelPath = chrome.runtime.getURL('models/');
 env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('transformers/');
+env.backends.onnx.wasm.numThreads = 1;
 
 let nerPipeline = null;
 let nerLoadAttempts = 0;
@@ -139,21 +142,6 @@ chrome.runtime.onMessage.addListener(
   (message, sender, sendResponse) => {
     if (message.target !== 'offscreen') {
       return false;
-    }
-
-    if (message.action === 'inspectImage') {
-      return runVisionWorker({
-        type: 'INSPECT_IMAGE',
-        imageDataUrl: message.imageDataUrl,
-      });
-    }
-
-    if (message.action === 'redactImage') {
-      return runVisionWorker({
-        type: 'REDACT_IMAGE',
-        imageDataUrl: message.imageDataUrl,
-        inspection: message.inspection,
-      });
     }
 
     if (message.type === 'PROCESS_TIER1') {

@@ -1,8 +1,8 @@
 // build.mjs
 import { build } from 'vite';
-import { viteStaticCopy } from 'vite-plugin-static-copy';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs/promises';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,7 +19,7 @@ for (const [i, entry] of builds.entries()) {
     root,
     build: {
       outDir: 'dist',
-      emptyOutDir: i === 0,          // wipe once, on the first entry only
+      emptyOutDir: i === 0, // wipe once, on the first entry only
       target: 'es2020',
       minify: false,
       rollupOptions: {
@@ -27,22 +27,45 @@ for (const [i, entry] of builds.entries()) {
         output: { entryFileNames: `${entry.name}.js`, format: 'es', inlineDynamicImports: true },
       },
     },
-    // ⬇ this is the piece that was missing from every actual build run
-    plugins: [
-      viteStaticCopy({
-        targets: [
-          { src: 'node_modules/@huggingface/transformers/dist/*.{wasm,mjs}', dest: 'transformers' },
-          { src: 'models/ner/**/*', dest: 'models/ner' },
-          { src: 'models/blazeface/*', dest: 'models/blazeface' },
-          { src: 'node_modules/@mediapipe/tasks-vision/wasm/*', dest: 'mediapipe/wasm' },
-          { src: 'models/privacy-detector/*', dest: 'models/privacy-detector' },
-          { src: 'models/ocr/*.tar', dest: 'models/ocr' },
-          { src: 'manifest.json', dest: '.' },
-          { src: 'popup.html', dest: '.' },
-          { src: 'offscreen.html', dest: '.' },
-        ],
-      }),
-    ],
   });
 }
+
+console.log('\nCopying static assets...');
+
+// 1. Copy manifest and HTML files
+for (const file of ['manifest.json', 'popup.html', 'offscreen.html']) {
+  await fs.copyFile(path.resolve(root, file), path.resolve(root, 'dist', file));
+}
+
+// 2. Copy models/ directory (blazeface, ner, ocr, privacy-detector) directly into dist/models
+await fs.cp(
+  path.resolve(root, 'models'),
+  path.resolve(root, 'dist/models'),
+  {
+    recursive: true,
+    force: true,
+    filter: (src) => !src.includes('.cache')
+  }
+);
+
+// 3. Copy mediapipe wasm files directly into dist/mediapipe/wasm
+const mediapipeWasmSrc = path.resolve(root, 'node_modules/@mediapipe/tasks-vision/wasm');
+const mediapipeWasmDest = path.resolve(root, 'dist/mediapipe/wasm');
+await fs.mkdir(mediapipeWasmDest, { recursive: true });
+await fs.cp(mediapipeWasmSrc, mediapipeWasmDest, { recursive: true, force: true });
+
+// 4. Copy onnxruntime-web WASM & MJS files directly into dist/transformers
+const ortDist = path.resolve(root, 'node_modules/onnxruntime-web/dist');
+const transformersDist = path.resolve(root, 'dist/transformers');
+await fs.mkdir(transformersDist, { recursive: true });
+const ortFiles = await fs.readdir(ortDist);
+for (const file of ortFiles) {
+  if (file.startsWith('ort-wasm')) {
+    await fs.copyFile(
+      path.join(ortDist, file),
+      path.join(transformersDist, file)
+    );
+  }
+}
+
 console.log('\nBuild completed successfully.');

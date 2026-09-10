@@ -67,9 +67,13 @@ Privacy and safety contract:
 - Typing into a sensitive field is allowed only after the local client confirmation guard.
 
 Return ONLY JSON:
-{"requestVisualContext":false,"imageId":null,"actions":[{"action":"click","targetId":"..."},{"action":"type","targetId":"...","value":"..."},{"action":"scroll","targetId":"..."}]}
+{"message":"...","requestVisualContext":false,"imageId":null,"actions":[{"action":"click","targetId":"..."},{"action":"type","targetId":"...","value":"..."},{"action":"scroll","targetId":"..."}]}
 
-When the instruction genuinely requires visual evidence and an image exists, set requestVisualContext=true, choose exactly one imageId, and return no actions.''' 
+- In "message", provide a direct, concise, and helpful answer to the user's question, or summarize the actions being taken.
+- If browser interaction is required (click, type, scroll), specify them in "actions".
+- When the instruction genuinely requires visual evidence and an image exists, set requestVisualContext=true, choose exactly one imageId, and return no actions.'''
+
+FALLBACK_MODELS = [MODEL, 'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash']
 
 def clean_actions(value: Any, elements: list[Element]) -> list[dict[str, Any]]:
     ids = {e.id for e in elements}
@@ -84,25 +88,34 @@ def clean_actions(value: Any, elements: list[Element]) -> list[dict[str, Any]]:
 
 def chat_json(system_prompt: str, user_text: str, image_data_url: str | None = None) -> dict[str, Any]:
     if client is None:
-        return {}
+        return {'error': 'Gemini API client not configured'}
     contents = [user_text]
     if image_data_url:
         header, b64data = image_data_url.split(',', 1)
         mime = header.split(':')[1].split(';')[0]
         contents.append(types.Part.from_bytes(data=base64.b64decode(b64data), mime_type=mime))
-    try:
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0,
-                response_mime_type='application/json',
-            ),
-        )
-        return json.loads(response.text or '{}')
-    except Exception:
-        return {}
+
+    models_to_try = list(dict.fromkeys([MODEL] + FALLBACK_MODELS))
+    last_err = None
+
+    for m in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=m,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    temperature=0,
+                    response_mime_type='application/json',
+                ),
+            )
+            return json.loads(response.text or '{}')
+        except Exception as e:
+            print(f"Error calling model {m}: {e}")
+            last_err = e
+            continue
+
+    return {'error': str(last_err or 'Failed to get response from Gemini models')}
 
 @app.get('/health')
 async def health():
@@ -117,20 +130,26 @@ async def orchestrate(state: BrowserState):
     if client is None:
         need = bool(state.images and VISUAL_WORDS.search(state.userPrompt))
         return {'status':'success','requestVisualContext':need,'imageId':state.images[0].id if need else None,'commands':[],
+                'message': 'API key not configured on privacy gateway.',
                 'elements':[e.model_dump(exclude_none=True) for e in state.elements]}
     result = chat_json(
-    SYSTEM_PROMPT,
-    json.dumps(sanitized)
+        SYSTEM_PROMPT,
+        json.dumps(sanitized)
     )
+    if 'error' in result and not result.get('actions') and not result.get('message'):
+        return {'status': 'error', 'error': result['error']}
+
     req = bool(result.get('requestVisualContext'))
     image_id = result.get('imageId')
     valid = image_id if any(i.id == image_id for i in state.images) else None
     if req and not valid and state.images: valid = state.images[0].id
     if valid:
         return {'status':'success','requestVisualContext':True,'imageId':valid,'commands':[],
+                'message': result.get('message', ''),
                 'elements':[e.model_dump(exclude_none=True) for e in state.elements]}
     actions = clean_actions(result.get('actions',[]), state.elements)
     return {'status':'success','requestVisualContext':False,'commands':actions,
+            'message': result.get('message', ''),
             'elements':[e.model_dump(exclude_none=True) for e in state.elements]}
 
 @app.post('/orchestrate-with-image')
@@ -138,20 +157,25 @@ async def orchestrate_with_image(request: ApprovedImage):
     if not request.imageDataUrl.startswith('data:image/'): return {'status':'error','error':'invalid_image_payload'}
     if len(request.imageDataUrl) > 12_000_000: return {'status':'error','error':'image_too_large'}
     elements = request.pageContext.elements
-    if client is None: return {'status':'success','commands':[],'elements':[e.model_dump(exclude_none=True) for e in elements]}
+    if client is None: return {'status':'success','commands':[],'message':'API key not configured','elements':[e.model_dump(exclude_none=True) for e in elements]}
     user_payload = {'instruction':request.userPrompt,
                     'page':{'url':request.pageContext.url,'title':request.pageContext.title,'viewport':request.pageContext.viewport},
                     'elements':[e.model_dump(exclude_none=True) for e in elements],
                     'localPrivacyInspection':request.inspection,
                     'imageId':request.imageId}
-    try:
-        parsed = chat_json(
+    parsed = chat_json(
         SYSTEM_PROMPT,
         json.dumps(user_payload),
         request.imageDataUrl
-        )
-        actions = clean_actions(parsed.get("actions", []), elements)
-    except Exception:
-        actions = []
+    )
+    if 'error' in parsed and not parsed.get('actions') and not parsed.get('message'):
+        return {'status': 'error', 'error': parsed['error']}
+
+    actions = clean_actions(parsed.get("actions", []), elements)
     return {'status':'success','requestVisualContext':False,'commands':actions,
+            'message': parsed.get('message', ''),
             'elements':[e.model_dump(exclude_none=True) for e in elements]}
+
+if __name__ == '__main__':
+    import uvicorn
+    uvicorn.run('main:app', host='127.0.0.1', port=8000, reload=True)

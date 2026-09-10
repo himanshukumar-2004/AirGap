@@ -1,22 +1,18 @@
 import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
-import * as ort from 'onnxruntime-web';
-import { PaddleOCR } from '@paddleocr/paddleocr-js';
+// import { PaddleOCR } from '@paddleocr/paddleocr-js';
 import {
   LlmInference,
   FilesetResolver as GenAiFilesetResolver,
 } from '@mediapipe/tasks-genai';
 
 const MODEL_BASE = chrome.runtime.getURL('models/');
-const WASM_BASE = chrome.runtime.getURL('transformers/');
-
-ort.env.wasm.wasmPaths = WASM_BASE;
 
 let faceDetector = null;
-let ocr = null;
+// let ocr = null;
 let llm = null;
 
 async function initVision() {
-  if (faceDetector && ocr) return;
+  if (faceDetector) return;
 
   const visionFileset = await FilesetResolver.forVisionTasks(
     chrome.runtime.getURL('mediapipe/wasm')
@@ -34,11 +30,11 @@ async function initVision() {
     }
   );
 
-  ocr = await PaddleOCR.create({
-    detModelPath: `${MODEL_BASE}ocr/det`,
-    recModelPath: `${MODEL_BASE}ocr/rec`,
-    useWasm: true,
-  });
+  // ocr = await PaddleOCR.create({
+  //   detModelPath: `${MODEL_BASE}ocr/det.tar`,
+  //   recModelPath: `${MODEL_BASE}ocr/rec.tar`,
+  //   useWasm: true,
+  // });
 }
 
 async function inspectImage(imageDataUrl) {

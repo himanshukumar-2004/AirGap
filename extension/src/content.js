@@ -31,49 +31,55 @@ async function inspectAndGateImage(imageId) {
   return { approved: true, imageId, redactedDataUrl, inspection };
 }
 
-browser.runtime.onMessage.addListener(async (message) => {
+browser.runtime.onMessage.addListener((message) => {
   if (message.action === 'runAgent') {
-    const payload = extractPageState();
-    return browser.runtime.sendMessage({ action: 'processContext', payload, userPrompt: message.userPrompt });
+    return (async () => {
+      const payload = extractPageState();
+      return await browser.runtime.sendMessage({ action: 'processContext', payload, userPrompt: message.userPrompt });
+    })();
   }
 
   if (message.action === 'requestVisualContext') {
-    try {
-      const result = await inspectAndGateImage(message.imageId);
-      if (!result.approved) return { approved: false };
-      return browser.runtime.sendMessage({
-        action: 'sendApprovedImage', ...result,
-        userPrompt: message.userPrompt,
-        pageContext: extractPageState(),
-      });
-    } catch (error) {
-      return { approved: false, error: String(error) };
-    }
+    return (async () => {
+      try {
+        const result = await inspectAndGateImage(message.imageId);
+        if (!result.approved) return { approved: false };
+        return await browser.runtime.sendMessage({
+          action: 'sendApprovedImage', ...result,
+          userPrompt: message.userPrompt,
+          pageContext: extractPageState(),
+        });
+      } catch (error) {
+        return { approved: false, error: String(error) };
+      }
+    })();
   }
 
   if (message.action === 'executeCommands') {
-    const results = [];
-    for (const command of message.commands || []) {
-      const result = executeCommand(command);
-      if (result.reason === 'sensitive_input_requires_confirmation' || result.reason === 'sensitive_submit_requires_confirmation') {
-        const proceed = await showPrivacyCheck({
-          imageAlt: result.reason === 'sensitive_submit_requires_confirmation' ? `Agent wants to submit ${command.targetId}` : `Agent wants to type into ${command.targetId}`,
-          summary: result.reason === 'sensitive_submit_requires_confirmation' ? 'This is a final action in a form containing a sensitive field.' : 'No value has been entered yet.',
-          domainBlocked: false,
-        });
-        if (!proceed) { results.push({ ok: false, reason: 'user_denied' }); continue; }
-        const el = getElement(command.targetId);
-        if (!el) { results.push({ ok: false, reason: 'target_not_found' }); continue; }
-        if (result.reason === 'sensitive_submit_requires_confirmation') el.click();
-        else {
-          const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
-          setter?.call(el, String(command.value ?? ''));
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        results.push({ ok: true, confirmed: true });
-      } else results.push(result);
-    }
-    return { results };
+    return (async () => {
+      const results = [];
+      for (const command of message.commands || []) {
+        const result = executeCommand(command);
+        if (result.reason === 'sensitive_input_requires_confirmation' || result.reason === 'sensitive_submit_requires_confirmation') {
+          const proceed = await showPrivacyCheck({
+            imageAlt: result.reason === 'sensitive_submit_requires_confirmation' ? `Agent wants to submit ${command.targetId}` : `Agent wants to type into ${command.targetId}`,
+            summary: result.reason === 'sensitive_submit_requires_confirmation' ? 'This is a final action in a form containing a sensitive field.' : 'No value has been entered yet.',
+            domainBlocked: false,
+          });
+          if (!proceed) { results.push({ ok: false, reason: 'user_denied' }); continue; }
+          const el = getElement(command.targetId);
+          if (!el) { results.push({ ok: false, reason: 'target_not_found' }); continue; }
+          if (result.reason === 'sensitive_submit_requires_confirmation') el.click();
+          else {
+            const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')?.set;
+            setter?.call(el, String(command.value ?? ''));
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          results.push({ ok: true, confirmed: true });
+        } else results.push(result);
+      }
+      return { results };
+    })();
   }
 });

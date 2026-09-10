@@ -4,19 +4,34 @@
   <meta charset="utf-8" />
   <title>SIH Privacy Agent</title>
   <style>
-    body{width:320px;margin:0;padding:16px;font:14px system-ui,sans-serif;color:#111}
-    h1{font-size:18px;margin:0 0 6px}.sub{font-size:12px;color:#666;margin-bottom:12px}
-    textarea{width:100%;height:82px;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:10px;resize:vertical}
-    button{width:100%;margin-top:10px;padding:10px;border:0;border-radius:10px;background:#111;color:#fff;cursor:pointer}
-    button:disabled{opacity:.5}.status{font-size:12px;margin-top:10px;color:#555;min-height:18px}
+    body{width:340px;margin:0;padding:16px;font:14px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#111;background:#fafafa}
+    h1{font-size:17px;margin:0 0 4px;font-weight:600;color:#111}
+    .sub{font-size:11px;color:#666;margin-bottom:12px;line-height:1.4}
+    textarea{width:100%;height:75px;box-sizing:border-box;padding:10px;border:1px solid #d1d5db;border-radius:8px;resize:vertical;font:inherit;font-size:13px;background:#fff}
+    textarea:focus{outline:none;border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,0.2)}
+    button{width:100%;margin-top:10px;padding:10px;border:0;border-radius:8px;background:#111827;color:#fff;font-weight:500;cursor:pointer;transition:background .15s}
+    button:hover:not(:disabled){background:#1f2937}
+    button:disabled{opacity:.5;cursor:not-allowed}
+    .status{font-size:12px;margin-top:10px;color:#4b5563;min-height:16px;word-break:break-word}
+    .status.error{color:#dc2626;font-weight:500}
+    .status.warning{color:#d97706}
+    .result-box{margin-top:12px;padding:12px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
+    .result-header{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#6b7280;margin-bottom:6px}
+    .result-body{font-size:13px;line-height:1.5;color:#1f2937;white-space:pre-wrap;word-break:break-word}
+    .actions-list{margin-top:8px;padding-top:8px;border-top:1px dashed #e5e7eb;font-size:11px;color:#4b5563;white-space:pre-line}
   </style>
 </head>
 <body>
   <h1>Privacy Visual Agent</h1>
-  <div class="sub">DOM/text can be sanitized automatically. Images are never uploaded automatically.</div>
-  <textarea id="prompt" placeholder="e.g. Find the checkout button and submit the form"></textarea>
+  <div class="sub">DOM text is locally sanitized. Imagery requires contextual user approval.</div>
+  <textarea id="prompt" placeholder="e.g. What is the heading of this page?"></textarea>
   <button id="run">Run agent</button>
   <div class="status" id="status"></div>
+  <div id="result-box" class="result-box" style="display: none;">
+    <div class="result-header">Agent Response</div>
+    <div id="result-body" class="result-body"></div>
+    <div id="result-actions" class="actions-list" style="display: none;"></div>
+  </div>
   <script type="module" src="popup.js"></script>
 </body>
 </html>
