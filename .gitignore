@@ -61,7 +61,7 @@ extension/dist/
 # Large downloaded model
 
 *.task
-extension/models/ner/onnx/*.onnx
+extension/models/ner/onnx
 
 # Common generated frontend/build folders
 
