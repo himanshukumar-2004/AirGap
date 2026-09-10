@@ -1,6 +1,7 @@
 import browser from 'webextension-polyfill';
 import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
 import * as ort from 'onnxruntime-web';
+try { ort.env.logLevel = 'error'; } catch {}
 import { inspectTextInImage } from './ocr.js';
 import { LlmInference, FilesetResolver as GenAiFilesetResolver } from '@mediapipe/tasks-genai';
 

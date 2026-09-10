@@ -140,7 +140,11 @@ async function callBackend(path, body) {
       body: JSON.stringify(body),
       signal: controller.signal,
     });
-    if (!response.ok) throw new Error(`backend_${response.status}`);
+    if (!response.ok) {
+      const errDetail = await response.text().catch(() => '');
+      console.error(`Backend error ${response.status}:`, errDetail);
+      throw new Error(`backend_${response.status}: ${errDetail}`);
+    }
     return await response.json();
   } catch (err) {
     if (err instanceof TypeError && err.message.includes('fetch')) {
@@ -283,12 +287,16 @@ browser.runtime.onMessage.addListener((message, sender) => {
           await storeMappings(message.pageContext.tier0Mapping, false);
         }
         const sanitizedPrompt = applyTier0Text(String(message.userPrompt || '').slice(0, 2_000));
+        const pageContext = {
+          ...(message.pageContext || {}),
+          userPrompt: sanitizedPrompt,
+        };
         const response = await callBackend('/orchestrate-with-image', {
           userPrompt: sanitizedPrompt,
           imageId: message.imageId,
           imageDataUrl: message.redactedDataUrl,
           inspection: message.inspection,
-          pageContext: message.pageContext,
+          pageContext,
         });
         return await handleBackendResponse(response, sender.tab?.id, message.userPrompt);
       } catch (error) {

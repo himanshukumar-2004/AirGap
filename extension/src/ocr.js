@@ -26,7 +26,8 @@ async function loadOCR() {
       ortOptions: {
         backend: 'wasm',
         numThreads: 1,
-        wasmPaths: localUrl('transformers/')
+        wasmPaths: localUrl('transformers/'),
+        logSeverityLevel: 3
       }
     });
   }

@@ -1,3 +1,33 @@
+// Silence benign MediaPipe and ONNX Runtime C++/Wasm initialization warnings
+// so Chrome does not record them as extension errors.
+globalThis.custom_dbg = function (text) {
+  if (
+    typeof text === 'string' &&
+    (text.includes('gl_context') ||
+      text.includes('OpenGL') ||
+      text.includes('inference_feedback_manager') ||
+      text.includes('XNNPACK') ||
+      text.includes('feedback_manager'))
+  ) {
+    return;
+  }
+  console.log('[MediaPipe]', text);
+};
+
+const _origWarn = console.warn;
+console.warn = function (...args) {
+  const msg = args.map(String).join(' ');
+  if (
+    msg.includes('OpenGL error checking is disabled') ||
+    msg.includes('inference_feedback_manager') ||
+    msg.includes('CleanUnusedInitializersAndNodeArgs') ||
+    msg.includes('Removing initializer')
+  ) {
+    return;
+  }
+  _origWarn.apply(console, args);
+};
+
 import './src/vision-worker.js';
 import { pipeline, env } from '@huggingface/transformers';
 
@@ -8,6 +38,7 @@ env.useWasmCache = false;
 env.localModelPath = chrome.runtime.getURL('models/');
 env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('transformers/');
 env.backends.onnx.wasm.numThreads = 1;
+env.backends.onnx.logLevel = 'error';
 
 let nerPipeline = null;
 let nerLoadAttempts = 0;

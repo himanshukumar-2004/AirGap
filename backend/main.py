@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from google import genai
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from google.genai import types
 
 load_dotenv()
@@ -20,6 +20,7 @@ app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['GET','PO
 VISUAL_WORDS = re.compile(r'\b(image|photo|picture|diagram|chart|graph|scan|x[- ]?ray|mri|ct|ultrasound|screenshot|icon|avatar|passport|card|document|medical|signature|qr)\b', re.I)
 
 class Element(BaseModel):
+    model_config = ConfigDict(extra='ignore')
     id: str
     type: str
     content: Optional[str] = None
@@ -32,6 +33,7 @@ class Element(BaseModel):
     height: Optional[int] = None
 
 class ImageMeta(BaseModel):
+    model_config = ConfigDict(extra='ignore')
     id: str
     type: str = 'image'
     alt: Optional[str] = None
@@ -42,19 +44,21 @@ class ImageMeta(BaseModel):
     bbox: Optional[list[float]] = None
 
 class BrowserState(BaseModel):
-    url: str
+    model_config = ConfigDict(extra='ignore')
+    url: str = ''
     title: str = ''
     viewport: dict[str, Any] = Field(default_factory=dict)
     elements: list[Element] = Field(default_factory=list)
     images: list[ImageMeta] = Field(default_factory=list)
-    userPrompt: str
+    userPrompt: Optional[str] = ''
 
 class ApprovedImage(BaseModel):
-    userPrompt: str
+    model_config = ConfigDict(extra='ignore')
+    userPrompt: Optional[str] = ''
     imageId: str
     imageDataUrl: str
     inspection: dict[str, Any] = Field(default_factory=dict)
-    pageContext: BrowserState
+    pageContext: Optional[BrowserState] = None
 
 SYSTEM_PROMPT = '''You are the reasoning component of a browser agent. The client is a trusted privacy gateway.
 
