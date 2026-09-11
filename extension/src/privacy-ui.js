@@ -25,8 +25,8 @@ export function showPrivacyCheck({ imageAlt, summary, domainBlocked }) {
         </div>
         ${domainBlocked ? '<div style="color:#a00;font-weight:700;margin-bottom:12px">This site is blocked by privacy policy. Transmission is disabled.</div>' : '<div style="font-size:12px;opacity:.65;margin-bottom:14px">Only a locally redacted representation can be sent.</div>'}
         <div style="display:flex;gap:10px;justify-content:flex-end">
-          <button id="__privacy_deny" style="padding:10px 15px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Keep private</button>
-          <button id="__privacy_allow" ${domainBlocked ? 'disabled' : ''} style="padding:10px 15px;border:0;border-radius:10px;background:#111;color:#fff;cursor:pointer;opacity:${domainBlocked ? '.4' : '1'}">Allow once</button>
+          <button id="__privacy_deny" style="padding:10px 18px;border:1px solid #d1d5db;border-radius:10px;background:#ffffff;color:#1f2937;font-size:14px;font-weight:500;cursor:pointer">Deny</button>
+          <button id="__privacy_allow" ${domainBlocked ? 'disabled' : ''} style="padding:10px 18px;border:0;border-radius:10px;background:#111827;color:#ffffff;font-size:14px;font-weight:500;cursor:pointer;opacity:${domainBlocked ? '.4' : '1'}">Allow once</button>
         </div>
       </div>`;
     root.querySelector('#__privacy_deny').onclick = () => { root.style.display = 'none'; resolve(false); };

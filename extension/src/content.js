@@ -80,11 +80,20 @@ function handleFinalResult(userPrompt, result, localMapping = {}) {
     return cmd;
   });
 
+  if (result.sentPayload) {
+    console.log(
+      '%c[Privacy Gateway] Sanitized Backend Request Payload:',
+      'color: #2563eb; font-weight: bold; font-size: 13px;',
+      result.sentPayload
+    );
+  }
+
   showAgentHud({
     title: 'Agent Response',
     status: result.tier1Degraded ? '⚠ Name detection unavailable — only pattern PII masked.' : 'Completed',
     message,
     actions: commands,
+    sentPayload: result.sentPayload,
     canClose: true,
   });
 
@@ -94,6 +103,7 @@ function handleFinalResult(userPrompt, result, localMapping = {}) {
       status: 'completed',
       message,
       commands,
+      sentPayload: result.sentPayload,
       tier1Degraded: Boolean(result.tier1Degraded),
       timestamp: Date.now(),
     },

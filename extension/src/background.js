@@ -134,6 +134,7 @@ async function callBackend(path, body) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20_000);
   try {
+    console.log(`[Privacy Gateway Service Worker -> ${path}] Outgoing Request Payload:`, body);
     const response = await fetch(`${BACKEND_URL}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -145,7 +146,9 @@ async function callBackend(path, body) {
       console.error(`Backend error ${response.status}:`, errDetail);
       throw new Error(`backend_${response.status}: ${errDetail}`);
     }
-    return await response.json();
+    const data = await response.json();
+    console.log(`[Privacy Gateway Service Worker <- ${path}] Incoming Response:`, data);
+    return data;
   } catch (err) {
     if (err instanceof TypeError && err.message.includes('fetch')) {
       throw new Error(`Cannot connect to backend server at ${BACKEND_URL}. Ensure the backend is running (python main.py).`);
@@ -255,14 +258,16 @@ browser.runtime.onMessage.addListener((message, sender) => {
           delete el.src;
         }
 
-        const response = await callBackend('/orchestrate', {
+        const backendPayload = {
           url: payload.url,
           title: payload.title,
           viewport: payload.viewport,
           elements: tier1.elements,
           images: payload.images?.map(({ src, ...safe }) => safe) || [],
           userPrompt: sanitizedPrompt,
-        });
+        };
+
+        const response = await callBackend('/orchestrate', backendPayload);
         const result = await handleBackendResponse(
           response,
           sender.tab?.id,
@@ -271,6 +276,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
         return {
           ...result,
           tier1Degraded: degraded,
+          sentPayload: backendPayload,
         };
       } catch (error) {
         return { status: 'error', error: String(error) };
@@ -291,14 +297,22 @@ browser.runtime.onMessage.addListener((message, sender) => {
           ...(message.pageContext || {}),
           userPrompt: sanitizedPrompt,
         };
-        const response = await callBackend('/orchestrate-with-image', {
+        const backendPayload = {
           userPrompt: sanitizedPrompt,
           imageId: message.imageId,
           imageDataUrl: message.redactedDataUrl,
           inspection: message.inspection,
           pageContext,
-        });
-        return await handleBackendResponse(response, sender.tab?.id, message.userPrompt);
+        };
+        const response = await callBackend('/orchestrate-with-image', backendPayload);
+        const result = await handleBackendResponse(response, sender.tab?.id, message.userPrompt);
+        return {
+          ...result,
+          sentPayload: {
+            ...backendPayload,
+            imageDataUrl: `${backendPayload.imageDataUrl.slice(0, 50)}... [${backendPayload.imageDataUrl.length} chars]`,
+          },
+        };
       } catch (error) {
         return { status: 'error', error: String(error) };
       }

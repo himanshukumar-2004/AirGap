@@ -41,6 +41,13 @@ for (const file of ['manifest.json', 'popup.html', 'offscreen.html']) {
   await fs.copyFile(path.resolve(root, file), path.resolve(root, 'dist', file));
 }
 
+// 1b. Copy test-page directory
+try {
+  await fs.cp(path.resolve(root, 'test-page'), path.resolve(root, 'dist/test-page'), { recursive: true, force: true });
+} catch (e) {
+  console.warn('Warning copying test-page:', e);
+}
+
 // 2. Copy models/ directory (blazeface, ner, ocr, privacy-detector) directly into dist/models
 await fs.cp(
   path.resolve(root, 'models'),

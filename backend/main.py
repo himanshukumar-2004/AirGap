@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from google.genai import types
 
 load_dotenv()
-MODEL = os.getenv('VISION_MODEL', 'gemini-3.8-flash')
+MODEL = os.getenv('VISION_MODEL', 'gemini-3.5-flash-lite')
 API_KEY = os.getenv('GEMINI_API_KEY')
 client = genai.Client(api_key=API_KEY) if API_KEY else None
 
@@ -77,7 +77,9 @@ Return ONLY JSON:
 - If browser interaction is required (click, type, scroll), specify them in "actions".
 - When the instruction genuinely requires visual evidence and an image exists, set requestVisualContext=true, choose exactly one imageId, and return no actions.'''
 
-FALLBACK_MODELS = [MODEL, 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.7-flash', 'gemini-3.8-flash']
+import time
+
+FALLBACK_MODELS = [MODEL, 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest']
 
 def clean_actions(value: Any, elements: list[Element]) -> list[dict[str, Any]]:
     ids = {e.id for e in elements}
@@ -103,21 +105,31 @@ def chat_json(system_prompt: str, user_text: str, image_data_url: str | None = N
     last_err = None
 
     for m in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=m,
-                contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    temperature=0,
-                    response_mime_type='application/json',
-                ),
-            )
-            return json.loads(response.text or '{}')
-        except Exception as e:
-            print(f"Error calling model {m}: {e}")
-            last_err = e
-            continue
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=m,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        temperature=0,
+                        response_mime_type='application/json',
+                    ),
+                )
+                return json.loads(response.text or '{}')
+            except Exception as e:
+                err_str = str(e)
+                print(f"Error calling model {m} (attempt {attempt + 1}): {err_str[:160]}")
+                last_err = e
+                if '429' in err_str or 'RESOURCE_EXHAUSTED' in err_str:
+                    match = re.search(r'retry in (\d+(?:\.\d+)?)s', err_str, re.I)
+                    delay = float(match.group(1)) if match else 2.0
+                    if delay <= 6.0 and attempt == 0:
+                        wait_time = delay + 0.5
+                        print(f"Rate limited on {m}. Pausing {wait_time:.1f}s for quota bucket refill...")
+                        time.sleep(wait_time)
+                        continue
+                break
 
     return {'error': str(last_err or 'Failed to get response from Gemini models')}
 
@@ -128,7 +140,7 @@ async def health():
 @app.post('/orchestrate')
 async def orchestrate(state: BrowserState):
     sanitized = {'url':state.url,'title':state.title,'viewport':state.viewport,
-                 'elements':[e.model_dump(exclude_none=True) for e in state.elements],
+                 'elements':[e.model_dump(exclude_none=True) for e in state.elements[:40]],
                  'images':[i.model_dump(exclude_none=True) for i in state.images],
                  'instruction':state.userPrompt}
     if client is None:
@@ -153,20 +165,26 @@ async def orchestrate(state: BrowserState):
                 'elements':[e.model_dump(exclude_none=True) for e in state.elements]}
     actions = clean_actions(result.get('actions',[]), state.elements)
     return {'status':'success','requestVisualContext':False,'commands':actions,
-            'message': result.get('message', ''),
-            'elements':[e.model_dump(exclude_none=True) for e in state.elements]}
+             'message': result.get('message', ''),
+             'elements':[e.model_dump(exclude_none=True) for e in state.elements]}
 
 @app.post('/orchestrate-with-image')
 async def orchestrate_with_image(request: ApprovedImage):
     if not request.imageDataUrl.startswith('data:image/'): return {'status':'error','error':'invalid_image_payload'}
     if len(request.imageDataUrl) > 12_000_000: return {'status':'error','error':'image_too_large'}
-    elements = request.pageContext.elements
+    elements = request.pageContext.elements if request.pageContext else []
     if client is None: return {'status':'success','commands':[],'message':'API key not configured','elements':[e.model_dump(exclude_none=True) for e in elements]}
-    user_payload = {'instruction':request.userPrompt,
-                    'page':{'url':request.pageContext.url,'title':request.pageContext.title,'viewport':request.pageContext.viewport},
-                    'elements':[e.model_dump(exclude_none=True) for e in elements],
-                    'localPrivacyInspection':request.inspection,
-                    'imageId':request.imageId}
+    
+    clean_inspection = {
+        'faceCount': request.inspection.get('faceCount', 0),
+        'warnings': request.inspection.get('warnings', []),
+    }
+    user_payload = {'instruction': request.userPrompt,
+                    'page': {'url': request.pageContext.url if request.pageContext else '',
+                             'title': request.pageContext.title if request.pageContext else ''},
+                    'elements': [e.model_dump(exclude_none=True) for e in elements[:30]],
+                    'localPrivacyInspection': clean_inspection,
+                    'imageId': request.imageId}
     parsed = chat_json(
         SYSTEM_PROMPT,
         json.dumps(user_payload),
@@ -182,4 +200,4 @@ async def orchestrate_with_image(request: ApprovedImage):
 
 if __name__ == '__main__':
     import uvicorn
-    uvicorn.run('main:app', host='127.0.0.1', port=8000, reload=True)
+    uvicorn.run('main:app', host='127.0.0.1', port=8000, reload=True, reload_excludes=['*.venv*', '*.pyc'])
