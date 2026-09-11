@@ -1,0 +1,44 @@
+{
+  "_comment": "Ground truth for text-tier testing. Each entry lists the exact strings that MUST be redacted (positives) and, for negative-control pages, strings that must NOT be redacted (negatives) so you can also measure false positives, not just recall.",
+  "page-01-contact-form.html": {
+    "positives": [
+      "Rohan Verma",
+      "rohan.verma88@example.com",
+      "+91 98765 43210",
+      "Anjali Sharma",
+      "234123412346",
+      "14 MG Road, Bangalore, Karnataka 560001",
+      "ABCDE1234F",
+      "Sup3rSecret!2024",
+      "4111 1111 1111 1111"
+    ],
+    "negatives": []
+  },
+  "page-02-profile-and-negatives.html": {
+    "positives": [
+      "Priya Nair",
+      "Pune",
+      "Infosys",
+      "IIT Delhi"
+    ],
+    "negatives": [
+      "INV-2024-88213",
+      "14:30 IST",
+      "4,500 units",
+      "XR-9000",
+      "support@examplecorp.com",
+      "ORD778812934"
+    ]
+  },
+  "page-03-checkout.html": {
+    "positives": [
+      "Karan Mehta",
+      "karan.mehta@example.com",
+      "9123456780",
+      "5500 0000 0000 0004",
+      "123",
+      "221B Baker Colony, Sector 21, Gurugram, Haryana 122001"
+    ],
+    "negatives": []
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "url": "http://localhost:3000/page-01-contact-form.html",
+  "title": "Test Page 01 — Contact Form",
+  "viewport": {
+    "width": 1280,
+    "height": 800,
+    "devicePixelRatio": 1
+  },
+  "elements": [
+    {
+      "id": "h1",
+      "type": "h1",
+      "content": "Employee Directory"
+    },
+    {
+      "id": "p1",
+      "type": "p",
+      "content": "Hi, my name is [PERSON_1] and I work in the [LOCATION_1] office. You can reach me at [EMAIL_1] or call me on [PHONE_1] during business hours."
+    },
+    {
+      "id": "p2",
+      "type": "p",
+      "content": "My colleague [PERSON_2] handles the [LOCATION_2] accounts; her Aadhaar for verification purposes is [AADHAAR_1]. Please do not share this externally."
+    },
+    {
+      "id": "p3",
+      "type": "p",
+      "content": "Our office address is 14 [LOCATION_3], [LOCATION_1], [LOCATION_4] [PINCODE_1]. The [ORG_2] on file for reimbursement is [PAN_1]."
+    },
+    {
+      "id": "pw",
+      "type": "password",
+      "content": "[REDACTED_PASSWORD]",
+      "sensitive": true
+    },
+    {
+      "id": "cc",
+      "type": "input",
+      "content": "Card number: [CREDIT_CARD_1]",
+      "sensitive": false
+    }
+  ],
+  "images": [],
+  "userPrompt": "Help me review the employee directory and contact details on this page."
+}

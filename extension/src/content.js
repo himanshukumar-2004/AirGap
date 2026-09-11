@@ -23,10 +23,26 @@ async function inspectAndGateImage(imageId) {
   }));
   const summary = summarizeInspection(inspection);
   const domainBlocked = await browser.runtime.sendMessage({ action: 'isDomainBlocked', host: location.host });
-  const approved = await showPrivacyCheck({ imageAlt: image.alt, summary, domainBlocked });
+
+  // Redact locally before gating so the user can visually confirm the redaction
+  let redactedDataUrl = null;
+  try {
+    redactedDataUrl = await redactImage(image, inspection);
+  } catch (err) {
+    console.warn('Pre-redaction failed:', err);
+  }
+
+  const approved = await showPrivacyCheck({
+    imageAlt: image.alt,
+    summary,
+    domainBlocked,
+    redactedDataUrl,
+  });
   if (!approved) return { approved: false };
 
-  const redactedDataUrl = await redactImage(image, inspection);
+  if (!redactedDataUrl?.startsWith('data:image/')) {
+    redactedDataUrl = await redactImage(image, inspection);
+  }
   if (!redactedDataUrl?.startsWith('data:image/')) throw new Error('redaction failed');
   return { approved: true, imageId, redactedDataUrl, inspection };
 }
@@ -94,6 +110,7 @@ function handleFinalResult(userPrompt, result, localMapping = {}) {
     message,
     actions: commands,
     sentPayload: result.sentPayload,
+    redactedImageUrl: result.redactedImageUrl,
     canClose: true,
   });
 
@@ -104,6 +121,7 @@ function handleFinalResult(userPrompt, result, localMapping = {}) {
       message,
       commands,
       sentPayload: result.sentPayload,
+      redactedImageUrl: result.redactedImageUrl,
       tier1Degraded: Boolean(result.tier1Degraded),
       timestamp: Date.now(),
     },
@@ -172,6 +190,7 @@ async function runAgentFlow(userPrompt) {
       handleFinalResult(userPrompt, {
         ...finalResult,
         tier1Degraded: result.tier1Degraded,
+        redactedImageUrl: gated.redactedDataUrl,
       }, approvedContext.tier0Mapping);
       return;
     }

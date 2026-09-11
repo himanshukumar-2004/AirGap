@@ -406,19 +406,30 @@ export async function redactImage(img, inspection) {
     const h = Math.max(1, (y2 - y1) / scaleY);
 
     if (d.label === 'face') {
-      const faceCanvas = document.createElement('canvas');
-      faceCanvas.width = Math.max(1, Math.round(w));
-      faceCanvas.height = Math.max(1, Math.round(h));
-      const fctx = faceCanvas.getContext('2d');
-      if (fctx) {
-        fctx.drawImage(canvas, x, y, w, h, 0, 0, faceCanvas.width, faceCanvas.height);
-        ctx.save();
-        ctx.filter = 'blur(20px)';
-        ctx.drawImage(faceCanvas, 0, 0, faceCanvas.width, faceCanvas.height, x, y, w, h);
-        ctx.restore();
-      }
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
-      ctx.fillRect(x, y, w, h);
+      // Expand face bounding box so forehead, chin, ears, and hairline are fully covered
+      const padX = Math.max(0, x - w * 0.15);
+      const padY = Math.max(0, y - h * 0.25);
+      const padW = Math.min(canvas.width - padX, w * 1.3);
+      const padH = Math.min(canvas.height - padY, h * 1.4);
+
+      // 1. 100% Solid Opaque Fill: completely overwrites all biometric pixel data
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(padX, padY, padW, padH);
+
+      // 2. High-contrast privacy border
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = Math.max(2, Math.min(6, Math.round(padW * 0.025)));
+      ctx.strokeRect(padX, padY, padW, padH);
+
+      // 3. Clear privacy badge label
+      const fontSize = Math.max(12, Math.min(24, Math.round(padH * 0.13)));
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `bold ${fontSize}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('[FACE REDACTED]', padX + padW / 2, padY + padH / 2);
+      ctx.textAlign = 'start';
+      ctx.textBaseline = 'alphabetic';
     } else if (d.source === 'ocr' || d.label?.startsWith('text_')) {
       /*
        * OCR-derived secrets are text.

@@ -57,6 +57,15 @@ function renderSavedRun(run) {
       resultActions.style.display = 'none';
     }
 
+    const resultImageBox = document.getElementById('result-image-box');
+    const resultImage = document.getElementById('result-image');
+    if (run.redactedImageUrl && resultImageBox && resultImage) {
+      resultImage.src = run.redactedImageUrl;
+      resultImageBox.style.display = 'flex';
+    } else if (resultImageBox) {
+      resultImageBox.style.display = 'none';
+    }
+
     if (resultBox) resultBox.style.display = 'block';
   }
 }

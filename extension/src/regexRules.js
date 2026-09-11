@@ -1,5 +1,5 @@
 const RULES = [
-  { name: 'EMAIL', regex: /[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+/gu },
+  { name: 'EMAIL', regex: /[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+/gu, predicate: isPersonalEmail },
   { name: 'CREDIT_CARD', regex: /\b(?:\d[ -]?){13,19}\b/gu, predicate: luhnCandidate },
   { name: 'AADHAAR', regex: /\b\d{4}[ -]?\d{4}[ -]?\d{4}\b/gu },
   { name: 'PHONE', regex: /(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,5}\)?[\s.-]?)?\d{5,10}/gu, predicate: plausiblePhone },
@@ -7,6 +7,11 @@ const RULES = [
   { name: 'PINCODE', regex: /\b[1-9]\d{5}\b/g },
   { name: 'SECRET', regex: /\b(?:sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|[A-Za-z0-9_-]{40,})\b/gu },
 ];
+
+function isPersonalEmail(value) {
+  const generic = /^(?:support|info|sales|contact|help|admin|hello|team|billing|careers|jobs|press|marketing|legal|privacy|security|inquiry|enquiry|feedback|service|customerservice|noreply|no-reply)@/i;
+  return !generic.test(value);
+}
 
 function digits(value) { return value.replace(/\D/g, ''); }
 function luhnCandidate(value) {

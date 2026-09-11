@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Test Page 02 — Profile & Negative Controls</title></head>
+<body>
+  <h1>About the Author</h1>
+  <p id="p1">Written by Priya Nair, a product manager based in Pune who previously worked
+     at Infosys and studied at IIT Delhi.</p>
+
+  <!-- Negative controls: these should NOT be flagged as PII. Used to measure false positives. -->
+  <p id="p2">The invoice number is INV-2024-88213. The meeting is scheduled for 14:30 IST
+     on the 3rd floor conference room. Order quantity: 4,500 units. Model number: XR-9000.</p>
+
+  <p id="p3">Contact our general support line at support@examplecorp.com for product
+     questions unrelated to any individual account.</p>
+
+  <span id="order-id">Order ID: ORD778812934</span>
+</body>
+</html>

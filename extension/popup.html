@@ -28,8 +28,12 @@
   <button id="run">Run agent</button>
   <div class="status" id="status"></div>
   <div id="result-box" class="result-box" style="display: none;">
-    <div class="result-header">Agent Response</div>
+    <div id="result-header" class="result-header">Agent Response</div>
     <div id="result-body" class="result-body"></div>
+    <div id="result-image-box" style="display: none; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #e5e7eb; align-items: center; gap: 8px;">
+      <img id="result-image" style="width: 54px; height: 38px; object-fit: cover; border-radius: 4px; border: 1px solid #d1d5db;" alt="Redacted image" />
+      <span style="font-size: 11px; color: #4b5563;">Locally sanitized visual context sent</span>
+    </div>
     <div id="result-actions" class="actions-list" style="display: none;"></div>
   </div>
   <script type="module" src="popup.js"></script>

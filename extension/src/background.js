@@ -76,16 +76,67 @@ async function runTier1(elements) {
   };
 }
 
+function groupEntities(tokens) {
+  const groups = [];
+  let curr = null;
+
+  for (const t of tokens) {
+    const isSubword = t.word.startsWith('##');
+    const cleanWord = isSubword ? t.word.slice(2) : t.word;
+    const tag = t.entity ? t.entity.replace(/^[BI]-/, '') : (t.entity_group || '');
+
+    if (curr && isSubword) {
+      curr.word += cleanWord;
+      curr.indices.push(t.index);
+      continue;
+    }
+
+    if (curr && (t.entity?.startsWith('I-') || (t.entity?.startsWith('B-') && tag === curr.tag && t.index === curr.indices[curr.indices.length - 1] + 1))) {
+      curr.word += ' ' + cleanWord;
+      curr.indices.push(t.index);
+      continue;
+    }
+
+    if (curr) {
+      groups.push(curr);
+    }
+    curr = { tag, word: cleanWord, indices: [t.index] };
+  }
+  if (curr) groups.push(curr);
+  return groups;
+}
+
+function escapeRegex(string) {
+  return string.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
+}
+
 function mergeEntityMappings(text, entities, mapping, counters, valueToToken = new Map()) {
   let out = text;
-  for (const ent of entities) {
-    const raw = String(ent.word || '').replace(/^##/u, '');
+  const groups = groupEntities(entities);
+
+  // Find all email addresses in text to prevent corrupting email domains
+  const emailMatches = out.match(/[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+/gu) || [];
+
+  for (const group of groups) {
+    const raw = String(group.word || '').trim();
     if (!raw || raw.length < 2) continue;
-    const group = String(ent.entity_group || ent.entity || '').toUpperCase();
-    let bucket = 'ENTITY';
-    if (group.includes('PER')) bucket = 'PERSON';
-    else if (group.includes('ORG')) bucket = 'ORG';
-    else if (group.includes('LOC')) bucket = 'LOCATION';
+
+    const g = group.tag.toUpperCase();
+    let bucket = null;
+    if (g.includes('PER')) {
+      bucket = 'PERSON';
+    } else if (g.includes('ORG')) {
+      bucket = 'ORG';
+    } else if (g.includes('LOC')) {
+      bucket = 'LOCATION';
+    }
+
+    // Do not redact MISC or unclassified non-PII entities
+    if (!bucket) continue;
+
+    // Do not redact if raw is part of an existing email address
+    const inEmail = emailMatches.some(em => em.toLowerCase().includes(raw.toLowerCase()));
+    if (inEmail) continue;
 
     let token;
     if (valueToToken && valueToToken.has(raw)) {
@@ -96,7 +147,16 @@ function mergeEntityMappings(text, entities, mapping, counters, valueToToken = n
       if (valueToToken) valueToToken.set(raw, token);
     }
 
-    if (out.includes(raw)) {
+    // Replace with word boundary to avoid partial token replacement
+    const wordRx = new RegExp(`(?<!\\w)${escapeRegex(raw)}(?!\\w)`, 'g');
+    if (wordRx.test(out)) {
+      out = out.replace(wordRx, token);
+      mapping[token] = raw;
+      const bareToken = `[${bucket}]`;
+      if (!mapping[bareToken]) {
+        mapping[bareToken] = raw;
+      }
+    } else if (out.includes(raw)) {
       out = out.split(raw).join(token);
       mapping[token] = raw;
       const bareToken = `[${bucket}]`;

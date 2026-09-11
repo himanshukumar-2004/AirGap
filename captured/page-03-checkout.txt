@@ -1,0 +1,40 @@
+{
+  "url": "http://localhost:3000/page-03-checkout.html",
+  "title": "Test Page 03 — Checkout",
+  "viewport": {
+    "width": 1280,
+    "height": 800,
+    "devicePixelRatio": 1
+  },
+  "elements": [
+    {
+      "id": "h1",
+      "type": "h1",
+      "content": "Checkout & Shipping"
+    },
+    {
+      "id": "p1",
+      "type": "p",
+      "content": "Customer Name: [PERSON_1]. Contact email: [EMAIL_1], mobile: [PHONE_1]."
+    },
+    {
+      "id": "p2",
+      "type": "p",
+      "content": "Delivery Address: 221B [LOCATION_1], [LOCATION_2] 21, [LOCATION_3], [LOCATION_4] [PINCODE_1]."
+    },
+    {
+      "id": "cc",
+      "type": "input",
+      "content": "Card number: [CREDIT_CARD_1]",
+      "sensitive": false
+    },
+    {
+      "id": "cvv",
+      "type": "password",
+      "content": "[REDACTED_PASSWORD]",
+      "sensitive": true
+    }
+  ],
+  "images": [],
+  "userPrompt": "Review the checkout and shipping details before payment."
+}

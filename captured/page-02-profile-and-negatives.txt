@@ -1,0 +1,38 @@
+{
+  "url": "http://localhost:3000/page-02-profile-and-negatives.html",
+  "title": "Test Page 02 — Profile & Negative Controls",
+  "viewport": {
+    "width": 1280,
+    "height": 800,
+    "devicePixelRatio": 1
+  },
+  "elements": [
+    {
+      "id": "h1",
+      "type": "h1",
+      "content": "About the Author"
+    },
+    {
+      "id": "p1",
+      "type": "p",
+      "content": "Written by [PERSON_1], a product manager based in [LOCATION_1] who previously worked at [ORG_1] and studied at [ORG_2]."
+    },
+    {
+      "id": "p2",
+      "type": "p",
+      "content": "The invoice number is INV-2024-88213. The meeting is scheduled for 14:30 IST on the 3rd floor conference room. Order quantity: 4,500 units. Model number: XR-9000."
+    },
+    {
+      "id": "p3",
+      "type": "p",
+      "content": "Contact our general support line at support@examplecorp.com for product questions unrelated to any individual account."
+    },
+    {
+      "id": "order-id",
+      "type": "span",
+      "content": "Order ID: ORD778812934"
+    }
+  ],
+  "images": [],
+  "userPrompt": "Summarize the author profile and invoice details."
+}
